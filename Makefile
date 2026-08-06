@@ -13,7 +13,7 @@ env: ## Create .env from .env.example if missing
 tools: ## Install dev tooling (air for Go hot reload, goose for migrations)
 	go install github.com/air-verse/air@latest
 	go install github.com/pressly/goose/v3/cmd/goose@latest
-	pnpm install
+	cd frontend && pnpm install
 
 deps: ## Start infra dependencies (postgres + rustfs)
 	docker compose up -d --wait
