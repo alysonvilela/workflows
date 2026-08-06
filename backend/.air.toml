@@ -1,0 +1,22 @@
+root = "."
+tmp_dir = "tmp"
+
+[build]
+  cmd = "go build -o ./tmp/api ./cmd/api"
+  bin = "./tmp/api"
+  include_ext = ["go", "sql", "tmpl", "toml"]
+  exclude_dir = ["tmp", "vendor", "testdata"]
+  exclude_regex = ["_test\\.go"]
+  # Migrations are embedded and run at boot, so a .sql change must rebuild.
+  include_dir = ["cmd", "internal", "migrations"]
+  delay = 200
+  stop_on_error = true
+  send_interrupt = true
+  # River needs a moment to finish in-flight Nodes before the process dies.
+  kill_delay = "2s"
+
+[log]
+  time = true
+
+[misc]
+  clean_on_exit = true

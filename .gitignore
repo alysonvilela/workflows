@@ -1,0 +1,13 @@
+.env
+*.local
+
+node_modules/
+dist/
+.vite/
+
+backend/tmp/
+backend/bin/
+*.test
+coverage.out
+
+.DS_Store
