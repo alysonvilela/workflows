@@ -1,7 +1,6 @@
 -- +goose Up
 CREATE TABLE companies (
     id               uuid PRIMARY KEY DEFAULT gen_random_uuid(),
-    name             text NOT NULL,
     company_context  jsonb NOT NULL DEFAULT '[]'::jsonb,
     created_at       timestamptz NOT NULL DEFAULT now(),
     updated_at       timestamptz NOT NULL DEFAULT now()

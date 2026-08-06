@@ -17,27 +17,12 @@ type Config struct {
 
 	DatabaseURL string
 
-	S3Endpoint               string
-	S3Region                 string
-	S3Bucket                 string
-	S3AccessKey              string
-	S3SecretKey              string
-	S3UsePathStyle           bool
-	StorageDeleteAfterIngest bool
-
-	LLMBaseURL        string
-	LLMAPIKey         string
-	LLMModel          string
-	LLMSummaryModel   string
-	LLMTimeoutSeconds int
-	LLMMaxConcurrent  int
-
-	WorkerEnabled   bool
-	RiverMaxWorkers int
-
-	MaxDepth       int
-	MaxNodesPerRun int
-	MaxUploadBytes int64
+	S3Endpoint     string
+	S3Region       string
+	S3Bucket       string
+	S3AccessKey    string
+	S3SecretKey    string
+	S3UsePathStyle bool
 }
 
 // Load reads the root .env (if present — a real deployment may set the
@@ -66,10 +51,6 @@ func Load() (Config, error) {
 		S3Bucket:    req("S3_BUCKET"),
 		S3AccessKey: req("S3_ACCESS_KEY"),
 		S3SecretKey: req("S3_SECRET_KEY"),
-
-		LLMBaseURL:      req("LLM_BASE_URL"),
-		LLMModel:        req("LLM_MODEL"),
-		LLMSummaryModel: req("LLM_SUMMARY_MODEL"),
 	}
 
 	if len(missing) > 0 {
@@ -77,15 +58,6 @@ func Load() (Config, error) {
 	}
 
 	cfg.S3UsePathStyle = boolEnv("S3_USE_PATH_STYLE", true)
-	cfg.StorageDeleteAfterIngest = boolEnv("STORAGE_DELETE_AFTER_INGEST", true)
-	cfg.LLMAPIKey = os.Getenv("LLM_API_KEY")
-	cfg.LLMTimeoutSeconds = intEnv("LLM_TIMEOUT_SECONDS", 120)
-	cfg.LLMMaxConcurrent = intEnv("LLM_MAX_CONCURRENT", 8)
-	cfg.WorkerEnabled = boolEnv("WORKER_ENABLED", true)
-	cfg.RiverMaxWorkers = intEnv("RIVER_MAX_WORKERS", 8)
-	cfg.MaxDepth = intEnv("MAX_DEPTH", 3)
-	cfg.MaxNodesPerRun = intEnv("MAX_NODES_PER_RUN", 40)
-	cfg.MaxUploadBytes = int64(intEnv("MAX_UPLOAD_BYTES", 10485760))
 
 	return cfg, nil
 }
@@ -121,16 +93,4 @@ func boolEnv(key string, fallback bool) bool {
 		return fallback
 	}
 	return b
-}
-
-func intEnv(key string, fallback int) int {
-	v := os.Getenv(key)
-	if v == "" {
-		return fallback
-	}
-	n, err := strconv.Atoi(v)
-	if err != nil {
-		return fallback
-	}
-	return n
 }
