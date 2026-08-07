@@ -136,6 +136,64 @@ func TestUploadDocument_MarkdownBecomesReadyWithRawText(t *testing.T) {
 	}
 }
 
+func TestUploadDocument_CSVBecomesReadyWithRawText(t *testing.T) {
+	srv, _ := newTestServer(t)
+	company := createCompany(t, srv, "Riverside Manufacturing")
+
+	result := uploadOne(t, srv, company.ID, "tickets.csv", []byte("subject,minutes\nInvoice mismatch,45"))
+
+	if result.Error != nil {
+		t.Fatalf("unexpected per-file error: %s", *result.Error)
+	}
+	if result.Document == nil {
+		t.Fatal("expected a document in the result")
+	}
+	doc := *result.Document
+	if doc.Status != "ready" {
+		t.Errorf("status = %q, want %q", doc.Status, "ready")
+	}
+	if doc.Kind != "csv" {
+		t.Errorf("kind = %q, want %q", doc.Kind, "csv")
+	}
+	if doc.Error != nil {
+		t.Errorf("expected no error on a ready document, got %q", *doc.Error)
+	}
+
+	getResp, err := http.Get(srv.URL + "/companies/" + company.ID + "/documents/" + doc.ID)
+	if err != nil {
+		t.Fatalf("get document: %v", err)
+	}
+	defer getResp.Body.Close()
+	var env documentEnvelopeDoc
+	if err := json.NewDecoder(getResp.Body).Decode(&env); err != nil {
+		t.Fatalf("decode get response: %v", err)
+	}
+	if env.Data.RawText == nil || *env.Data.RawText != "subject,minutes\nInvoice mismatch,45" {
+		t.Errorf("raw_text = %v, want the uploaded content unchanged", env.Data.RawText)
+	}
+}
+
+func TestUploadDocument_MalformedCSVRecordsFailureOnTheDocument(t *testing.T) {
+	srv, _ := newTestServer(t)
+	company := createCompany(t, srv, "Bem-Estar Clinic")
+
+	result := uploadOne(t, srv, company.ID, "broken.csv", []byte(`a,"unterminated`+"\n"))
+
+	if result.Error != nil {
+		t.Fatalf("a parsing failure must not fail the request, got top-level error %q", *result.Error)
+	}
+	if result.Document == nil {
+		t.Fatal("expected a document even though parsing failed")
+	}
+	doc := *result.Document
+	if doc.Status != "failed" {
+		t.Errorf("status = %q, want %q", doc.Status, "failed")
+	}
+	if doc.Error == nil || *doc.Error == "" {
+		t.Error("expected a readable reason recorded on the document")
+	}
+}
+
 func TestUploadDocument_OversizedFileFailsBeforeAnyProcessing(t *testing.T) {
 	srv, db := newTestServer(t)
 	company := createCompany(t, srv, "Vera Accounting")

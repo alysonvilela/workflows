@@ -30,7 +30,7 @@ export function DocumentsPanel({ companyId }: { companyId: string }): React.Reac
           <EmptyHeader>
             <EmptyTitle>No documents yet</EmptyTitle>
             <EmptyDescription>
-              Drop a Markdown file above to start building the Company Context.
+              Drop a Markdown or CSV file above to start building the Company Context.
             </EmptyDescription>
           </EmptyHeader>
         </Empty>
@@ -89,10 +89,10 @@ function UploadDropzone({ companyId }: { companyId: string }): React.ReactElemen
       ) : (
         <UploadIcon className="size-5 text-muted-foreground" />
       )}
-      <span className="font-medium text-sm">Drop Markdown files, or click to browse</span>
+      <span className="font-medium text-sm">Drop Markdown or CSV files, or click to browse</span>
       <span className="text-[11px] text-muted-foreground">one or several at a time</span>
       <input
-        accept=".md,.markdown"
+        accept=".md,.markdown,.csv"
         className="sr-only"
         multiple
         onChange={(e) => {
