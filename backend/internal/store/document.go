@@ -2,18 +2,29 @@ package store
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 
 	"github.com/discovery/backend/internal/domain"
 	"github.com/jackc/pgx/v5"
 )
 
-const documentColumns = `id, company_id, s3_key, title, kind, raw_text, status, error, checksum, created_at, updated_at`
+const documentColumns = `id, company_id, s3_key, title, kind, raw_text, summary, status, error, checksum, created_at, updated_at`
 
 func scanDocument(row pgx.Row) (domain.Document, error) {
 	var d domain.Document
-	err := row.Scan(&d.ID, &d.CompanyID, &d.S3Key, &d.Title, &d.Kind, &d.RawText, &d.Status, &d.Error, &d.Checksum, &d.CreatedAt, &d.UpdatedAt)
-	return d, err
+	var summaryJSON []byte
+	if err := row.Scan(&d.ID, &d.CompanyID, &d.S3Key, &d.Title, &d.Kind, &d.RawText, &summaryJSON, &d.Status, &d.Error, &d.Checksum, &d.CreatedAt, &d.UpdatedAt); err != nil {
+		return domain.Document{}, err
+	}
+	if len(summaryJSON) > 0 {
+		var summary domain.DocumentSummary
+		if err := json.Unmarshal(summaryJSON, &summary); err != nil {
+			return domain.Document{}, fmt.Errorf("store: decode document summary: %w", err)
+		}
+		d.Summary = &summary
+	}
+	return d, nil
 }
 
 func (s *Store) FindDocumentByChecksum(ctx context.Context, companyID, checksum string) (domain.Document, error) {
@@ -56,12 +67,16 @@ func (s *Store) CreateDocumentIfNew(ctx context.Context, companyID, s3Key, title
 	return d, true, nil
 }
 
-func (s *Store) MarkDocumentReady(ctx context.Context, id, rawText string) (domain.Document, error) {
+func (s *Store) MarkDocumentReady(ctx context.Context, id, rawText string, summary domain.DocumentSummary) (domain.Document, error) {
+	summaryJSON, err := json.Marshal(summary)
+	if err != nil {
+		return domain.Document{}, fmt.Errorf("store: encode document summary: %w", err)
+	}
 	row := s.Pool.QueryRow(ctx, `
 		UPDATE documents
-		SET status = 'ready', raw_text = $2, error = NULL, updated_at = now()
+		SET status = 'ready', raw_text = $2, summary = $3, error = NULL, updated_at = now()
 		WHERE id = $1
-		RETURNING `+documentColumns, id, rawText)
+		RETURNING `+documentColumns, id, rawText, summaryJSON)
 	d, err := scanDocument(row)
 	if isNotFoundError(err) {
 		return domain.Document{}, domain.ErrNotFound

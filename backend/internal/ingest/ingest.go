@@ -1,7 +1,8 @@
 // Package ingest is the seam described in the spec: upload → object storage
-// → Parse Strategy → raw_text. It is reached from an HTTP upload today and,
-// from a later ticket, from answering an ask_document Gate — both call
-// Ingest with the same bytes-in, Document-out shape.
+// → Parse Strategy → summariser → raw_text and summary on the Document. It
+// is reached from an HTTP upload today and, from a later ticket, from
+// answering an ask_document Gate — both call Ingest with the same
+// bytes-in, Document-out shape.
 package ingest
 
 import (
@@ -20,7 +21,7 @@ import (
 type DocumentStore interface {
 	FindDocumentByChecksum(ctx context.Context, companyID, checksum string) (domain.Document, error)
 	CreateDocumentIfNew(ctx context.Context, companyID, s3Key, title, kind, checksum string) (doc domain.Document, created bool, err error)
-	MarkDocumentReady(ctx context.Context, id, rawText string) (domain.Document, error)
+	MarkDocumentReady(ctx context.Context, id, rawText string, summary domain.DocumentSummary) (domain.Document, error)
 	MarkDocumentFailed(ctx context.Context, id, reason string) (domain.Document, error)
 }
 
@@ -30,9 +31,17 @@ type ObjectStore interface {
 	Delete(ctx context.Context, key string) error
 }
 
+// Summariser is the LLM seam Ingestor depends on — Provider.Complete one
+// level up (see internal/llm), already narrowed to raw_text-in,
+// summary-out.
+type Summariser interface {
+	Summarise(ctx context.Context, rawText string) (domain.DocumentSummary, error)
+}
+
 type Ingestor struct {
 	Documents         DocumentStore
 	Objects           ObjectStore
+	Summariser        Summariser
 	MaxUploadBytes    int64
 	DeleteAfterIngest bool
 }
@@ -86,7 +95,16 @@ func (in *Ingestor) Ingest(ctx context.Context, companyID, filename string, data
 		return failed, nil
 	}
 
-	ready, err := in.Documents.MarkDocumentReady(ctx, doc.ID, rawText)
+	summary, sumErr := in.Summariser.Summarise(ctx, rawText)
+	if sumErr != nil {
+		failed, err := in.Documents.MarkDocumentFailed(ctx, doc.ID, sumErr.Error())
+		if err != nil {
+			return domain.Document{}, fmt.Errorf("ingest: mark %s failed: %w", filename, err)
+		}
+		return failed, nil
+	}
+
+	ready, err := in.Documents.MarkDocumentReady(ctx, doc.ID, rawText, summary)
 	if err != nil {
 		return domain.Document{}, fmt.Errorf("ingest: mark %s ready: %w", filename, err)
 	}

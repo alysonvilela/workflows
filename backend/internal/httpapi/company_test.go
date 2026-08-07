@@ -11,6 +11,7 @@ import (
 	"github.com/discovery/backend/internal/config"
 	"github.com/discovery/backend/internal/httpapi"
 	"github.com/discovery/backend/internal/ingest"
+	"github.com/discovery/backend/internal/llm"
 	"github.com/discovery/backend/internal/storage"
 	"github.com/discovery/backend/internal/store"
 )
@@ -55,9 +56,23 @@ func newTestServer(t *testing.T) (*httptest.Server, *store.Store) {
 		t.Fatalf("ensure bucket: %v", err)
 	}
 
+	provider := llm.NewScriptedProvider()
+	provider.SetDefault(llm.SummariseToolName, llm.ToolCall{
+		Name: llm.SummariseToolName,
+		Arguments: json.RawMessage(`{
+			"theme": "test fixture",
+			"context": "context assembled by the ScriptedProvider test default",
+			"topics": ["topic"],
+			"pains": ["pain"],
+			"examples": ["example"],
+			"opportunities": ["opportunity"]
+		}`),
+	})
+
 	ingestor := &ingest.Ingestor{
 		Documents:         db,
 		Objects:           objectStore,
+		Summariser:        &llm.Summariser{Provider: provider, Model: "test-model"},
 		MaxUploadBytes:    cfg.MaxUploadBytes,
 		DeleteAfterIngest: cfg.StorageDeleteAfterIngest,
 	}

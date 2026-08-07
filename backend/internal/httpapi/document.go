@@ -29,16 +29,17 @@ func registerDocumentRoutes(r chi.Router, companies CompanyStore, documents Docu
 }
 
 type documentResponse struct {
-	ID        string    `json:"id"`
-	CompanyID string    `json:"company_id"`
-	Title     string    `json:"title"`
-	Kind      string    `json:"kind"`
-	Status    string    `json:"status"`
-	Error     *string   `json:"error,omitempty"`
-	Checksum  string    `json:"checksum"`
-	RawText   *string   `json:"raw_text,omitempty"`
-	CreatedAt time.Time `json:"created_at"`
-	UpdatedAt time.Time `json:"updated_at"`
+	ID        string                  `json:"id"`
+	CompanyID string                  `json:"company_id"`
+	Title     string                  `json:"title"`
+	Kind      string                  `json:"kind"`
+	Status    string                  `json:"status"`
+	Error     *string                 `json:"error,omitempty"`
+	Checksum  string                  `json:"checksum"`
+	RawText   *string                 `json:"raw_text,omitempty"`
+	Summary   *domain.DocumentSummary `json:"summary,omitempty"`
+	CreatedAt time.Time               `json:"created_at"`
+	UpdatedAt time.Time               `json:"updated_at"`
 }
 
 func newDocumentResponse(d domain.Document) documentResponse {
@@ -51,6 +52,7 @@ func newDocumentResponse(d domain.Document) documentResponse {
 		Error:     d.Error,
 		Checksum:  d.Checksum,
 		RawText:   d.RawText,
+		Summary:   d.Summary,
 		CreatedAt: d.CreatedAt,
 		UpdatedAt: d.UpdatedAt,
 	}
@@ -72,9 +74,9 @@ type listDocumentsResponse struct {
 // Document; a file that reached the pipeline always carries a Document,
 // whose own Status/Error record a parsing failure.
 type uploadResult struct {
-	Filename string             `json:"filename"`
-	Document *documentResponse  `json:"document,omitempty"`
-	Error    *string            `json:"error,omitempty"`
+	Filename string            `json:"filename"`
+	Document *documentResponse `json:"document,omitempty"`
+	Error    *string           `json:"error,omitempty"`
 }
 
 type uploadDocumentsResponse struct {

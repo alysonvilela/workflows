@@ -26,6 +26,13 @@ type Config struct {
 
 	MaxUploadBytes           int64
 	StorageDeleteAfterIngest bool
+
+	LLMBaseURL        string
+	LLMAPIKey         string
+	LLMModel          string
+	LLMSummaryModel   string
+	LLMTimeoutSeconds int
+	LLMMaxConcurrent  int
 }
 
 // Load reads the root .env (if present — a real deployment may set the
@@ -54,12 +61,22 @@ func Load() (Config, error) {
 		S3Bucket:    req("S3_BUCKET"),
 		S3AccessKey: req("S3_ACCESS_KEY"),
 		S3SecretKey: req("S3_SECRET_KEY"),
+
+		LLMBaseURL:      req("LLM_BASE_URL"),
+		LLMModel:        req("LLM_MODEL"),
+		LLMSummaryModel: req("LLM_SUMMARY_MODEL"),
 	}
 	maxUploadBytesStr := req("MAX_UPLOAD_BYTES")
+	llmTimeoutSecondsStr := req("LLM_TIMEOUT_SECONDS")
+	llmMaxConcurrentStr := req("LLM_MAX_CONCURRENT")
 
 	if len(missing) > 0 {
 		return Config{}, fmt.Errorf("config: missing required environment variable(s): %v (copy .env.example to .env and fill them in)", missing)
 	}
+
+	// Not every OpenAI-compatible provider needs a key (local vLLM, Ollama,
+	// LM Studio) — unlike the rest of this block, an empty value is valid.
+	cfg.LLMAPIKey = os.Getenv("LLM_API_KEY")
 
 	cfg.S3UsePathStyle = boolEnv("S3_USE_PATH_STYLE", true)
 	cfg.StorageDeleteAfterIngest = boolEnv("STORAGE_DELETE_AFTER_INGEST", false)
@@ -69,6 +86,18 @@ func Load() (Config, error) {
 		return Config{}, fmt.Errorf("config: MAX_UPLOAD_BYTES must be an integer: %w", err)
 	}
 	cfg.MaxUploadBytes = maxUploadBytes
+
+	llmTimeoutSeconds, err := strconv.Atoi(llmTimeoutSecondsStr)
+	if err != nil {
+		return Config{}, fmt.Errorf("config: LLM_TIMEOUT_SECONDS must be an integer: %w", err)
+	}
+	cfg.LLMTimeoutSeconds = llmTimeoutSeconds
+
+	llmMaxConcurrent, err := strconv.Atoi(llmMaxConcurrentStr)
+	if err != nil {
+		return Config{}, fmt.Errorf("config: LLM_MAX_CONCURRENT must be an integer: %w", err)
+	}
+	cfg.LLMMaxConcurrent = llmMaxConcurrent
 
 	return cfg, nil
 }

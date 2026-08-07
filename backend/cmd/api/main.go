@@ -12,6 +12,7 @@ import (
 	"github.com/discovery/backend/internal/config"
 	"github.com/discovery/backend/internal/httpapi"
 	"github.com/discovery/backend/internal/ingest"
+	"github.com/discovery/backend/internal/llm"
 	"github.com/discovery/backend/internal/storage"
 	"github.com/discovery/backend/internal/store"
 )
@@ -60,9 +61,17 @@ func run() error {
 		return err
 	}
 
+	provider := llm.NewOpenAIProvider(llm.Config{
+		BaseURL:       cfg.LLMBaseURL,
+		APIKey:        cfg.LLMAPIKey,
+		MaxConcurrent: cfg.LLMMaxConcurrent,
+		Timeout:       time.Duration(cfg.LLMTimeoutSeconds) * time.Second,
+	})
+
 	ingestor := &ingest.Ingestor{
 		Documents:         db,
 		Objects:           objectStore,
+		Summariser:        &llm.Summariser{Provider: provider, Model: cfg.LLMSummaryModel},
 		MaxUploadBytes:    cfg.MaxUploadBytes,
 		DeleteAfterIngest: cfg.StorageDeleteAfterIngest,
 	}
