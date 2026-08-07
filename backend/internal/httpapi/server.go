@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"strings"
 
+	"github.com/discovery/backend/internal/ingest"
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
 )
@@ -16,13 +17,14 @@ type Pinger interface {
 }
 
 // DB is the full seam handlers depend on for database access: liveness plus
-// the per-entity stores (only Company today).
+// the per-entity stores.
 type DB interface {
 	Pinger
 	CompanyStore
+	DocumentStore
 }
 
-func NewRouter(db DB, objectStore Pinger, corsAllowedOrigins string) http.Handler {
+func NewRouter(db DB, objectStore Pinger, ingestor *ingest.Ingestor, corsAllowedOrigins string) http.Handler {
 	r := chi.NewRouter()
 	r.Use(middleware.RequestID)
 	r.Use(middleware.RealIP)
@@ -32,6 +34,7 @@ func NewRouter(db DB, objectStore Pinger, corsAllowedOrigins string) http.Handle
 
 	r.Get("/health", healthHandler(db, objectStore))
 	registerCompanyRoutes(r, db)
+	registerDocumentRoutes(r, db, db, ingestor)
 
 	return r
 }

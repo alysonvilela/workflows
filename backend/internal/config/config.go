@@ -23,6 +23,9 @@ type Config struct {
 	S3AccessKey    string
 	S3SecretKey    string
 	S3UsePathStyle bool
+
+	MaxUploadBytes           int64
+	StorageDeleteAfterIngest bool
 }
 
 // Load reads the root .env (if present — a real deployment may set the
@@ -52,12 +55,20 @@ func Load() (Config, error) {
 		S3AccessKey: req("S3_ACCESS_KEY"),
 		S3SecretKey: req("S3_SECRET_KEY"),
 	}
+	maxUploadBytesStr := req("MAX_UPLOAD_BYTES")
 
 	if len(missing) > 0 {
 		return Config{}, fmt.Errorf("config: missing required environment variable(s): %v (copy .env.example to .env and fill them in)", missing)
 	}
 
 	cfg.S3UsePathStyle = boolEnv("S3_USE_PATH_STYLE", true)
+	cfg.StorageDeleteAfterIngest = boolEnv("STORAGE_DELETE_AFTER_INGEST", false)
+
+	maxUploadBytes, err := strconv.ParseInt(maxUploadBytesStr, 10, 64)
+	if err != nil {
+		return Config{}, fmt.Errorf("config: MAX_UPLOAD_BYTES must be an integer: %w", err)
+	}
+	cfg.MaxUploadBytes = maxUploadBytes
 
 	return cfg, nil
 }

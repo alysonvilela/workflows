@@ -2,6 +2,7 @@
 package storage
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 
@@ -52,6 +53,33 @@ func (s *Storage) EnsureBucket(ctx context.Context) error {
 	_, err = s.client.CreateBucket(ctx, &s3.CreateBucketInput{Bucket: aws.String(s.bucket)})
 	if err != nil {
 		return fmt.Errorf("storage: create bucket %q: %w", s.bucket, err)
+	}
+	return nil
+}
+
+// Put uploads body to key, overwriting any existing object there.
+func (s *Storage) Put(ctx context.Context, key string, body []byte, contentType string) error {
+	_, err := s.client.PutObject(ctx, &s3.PutObjectInput{
+		Bucket:      aws.String(s.bucket),
+		Key:         aws.String(key),
+		Body:        bytes.NewReader(body),
+		ContentType: aws.String(contentType),
+	})
+	if err != nil {
+		return fmt.Errorf("storage: put %q: %w", key, err)
+	}
+	return nil
+}
+
+// Delete removes key. Called once a Document's raw_text has been extracted,
+// when STORAGE_DELETE_AFTER_INGEST is set.
+func (s *Storage) Delete(ctx context.Context, key string) error {
+	_, err := s.client.DeleteObject(ctx, &s3.DeleteObjectInput{
+		Bucket: aws.String(s.bucket),
+		Key:    aws.String(key),
+	})
+	if err != nil {
+		return fmt.Errorf("storage: delete %q: %w", key, err)
 	}
 	return nil
 }

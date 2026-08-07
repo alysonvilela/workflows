@@ -11,6 +11,7 @@ import (
 
 	"github.com/discovery/backend/internal/config"
 	"github.com/discovery/backend/internal/httpapi"
+	"github.com/discovery/backend/internal/ingest"
 	"github.com/discovery/backend/internal/storage"
 	"github.com/discovery/backend/internal/store"
 )
@@ -59,7 +60,14 @@ func run() error {
 		return err
 	}
 
-	router := httpapi.NewRouter(db, objectStore, cfg.CORSAllowedOrigins)
+	ingestor := &ingest.Ingestor{
+		Documents:         db,
+		Objects:           objectStore,
+		MaxUploadBytes:    cfg.MaxUploadBytes,
+		DeleteAfterIngest: cfg.StorageDeleteAfterIngest,
+	}
+
+	router := httpapi.NewRouter(db, objectStore, ingestor, cfg.CORSAllowedOrigins)
 
 	srv := &http.Server{
 		Addr:              ":" + cfg.APIPort,

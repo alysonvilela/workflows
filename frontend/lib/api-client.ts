@@ -179,6 +179,127 @@ async function deleteCompany(id: string): Promise<Result<void, ApiError>> {
   return request<void>(`/companies/${id}`, { method: "DELETE" });
 }
 
+/* ── documents ───────────────────────────────────────────────────────── */
+
+export type DocumentStatus = "parsing" | "ready" | "failed";
+export type DocumentKind = "markdown" | "csv";
+
+export interface Document {
+  id: string;
+  companyId: string;
+  title: string;
+  kind: DocumentKind;
+  status: DocumentStatus;
+  error: string | null;
+  checksum: string;
+  rawText: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+interface DocumentDTO {
+  id: string;
+  company_id: string;
+  title: string;
+  kind: DocumentKind;
+  status: DocumentStatus;
+  error?: string | null;
+  checksum: string;
+  raw_text?: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+function fromDocumentDTO(dto: DocumentDTO): Document {
+  return {
+    id: dto.id,
+    companyId: dto.company_id,
+    title: dto.title,
+    kind: dto.kind,
+    status: dto.status,
+    error: dto.error ?? null,
+    checksum: dto.checksum,
+    rawText: dto.raw_text ?? null,
+    createdAt: dto.created_at,
+    updatedAt: dto.updated_at,
+  };
+}
+
+async function listDocuments(
+  companyId: string,
+  page = 1,
+  perPage = 50,
+): Promise<Result<{ documents: Document[]; pagination: Pagination }, ApiError>> {
+  const result = await request<{
+    data: DocumentDTO[];
+    meta: { pagination: { page: number; per_page: number; total: number; total_pages: number } };
+  }>(`/companies/${companyId}/documents?page=${page}&per_page=${perPage}`);
+  if (!result.ok) return result;
+
+  return ok({
+    documents: result.value.data.map(fromDocumentDTO),
+    pagination: {
+      page: result.value.meta.pagination.page,
+      perPage: result.value.meta.pagination.per_page,
+      total: result.value.meta.pagination.total,
+      totalPages: result.value.meta.pagination.total_pages,
+    },
+  });
+}
+
+async function getDocument(companyId: string, id: string): Promise<Result<Document, ApiError>> {
+  const result = await request<{ data: DocumentDTO }>(`/companies/${companyId}/documents/${id}`);
+  return result.ok ? ok(fromDocumentDTO(result.value.data)) : result;
+}
+
+export interface UploadFileResult {
+  filename: string;
+  document: Document | null;
+  error: string | null;
+}
+
+// A per-file failure (unsupported type, too large) never surfaces as an
+// ApiRequestError — it comes back as one entry in the array, alongside
+// whichever other files in the same batch succeeded.
+async function uploadDocuments(
+  companyId: string,
+  files: File[],
+): Promise<Result<UploadFileResult[], ApiError>> {
+  const form = new FormData();
+  for (const file of files) {
+    form.append("files", file);
+  }
+
+  let response: Response;
+  try {
+    response = await fetch(`${baseUrl}/companies/${companyId}/documents`, {
+      method: "POST",
+      body: form,
+    });
+  } catch (error) {
+    return fail({ message: error instanceof Error ? error.message : "network error" });
+  }
+
+  const body: unknown = await response.json().catch(() => undefined);
+
+  if (!response.ok) {
+    return fail(
+      isErrorEnvelope(body) ? body.error : { message: response.statusText || "upload failed" },
+    );
+  }
+
+  const envelope = body as {
+    data: { filename: string; document?: DocumentDTO; error?: string }[];
+  };
+  return ok(
+    envelope.data.map((r) => ({
+      filename: r.filename,
+      document: r.document ? fromDocumentDTO(r.document) : null,
+      error: r.error ?? null,
+    })),
+  );
+}
+
 export const api = {
   health,
   listCompanies,
@@ -186,4 +307,7 @@ export const api = {
   createCompany,
   renameCompany,
   deleteCompany,
+  listDocuments,
+  getDocument,
+  uploadDocuments,
 };

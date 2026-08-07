@@ -10,15 +10,14 @@ import (
 
 	"github.com/discovery/backend/internal/config"
 	"github.com/discovery/backend/internal/httpapi"
+	"github.com/discovery/backend/internal/ingest"
+	"github.com/discovery/backend/internal/storage"
 	"github.com/discovery/backend/internal/store"
 )
 
-// fakePinger stands in for the object store — Company CRUD never touches
-// it, but NewRouter still wires it into the /health route.
-type fakePinger struct{}
-
-func (fakePinger) Ping(context.Context) error { return nil }
-
+// newTestServer boots the router against real Postgres and real rustfs
+// (Seam 1): faking either would mean testing the fakes instead of the
+// system.
 func newTestServer(t *testing.T) (*httptest.Server, *store.Store) {
 	t.Helper()
 	ctx := context.Background()
@@ -41,7 +40,29 @@ func newTestServer(t *testing.T) (*httptest.Server, *store.Store) {
 		t.Fatalf("truncate: %v", err)
 	}
 
-	srv := httptest.NewServer(httpapi.NewRouter(db, fakePinger{}, "*"))
+	objectStore, err := storage.New(ctx, storage.Config{
+		Endpoint:     cfg.S3Endpoint,
+		Region:       cfg.S3Region,
+		Bucket:       cfg.S3Bucket,
+		AccessKey:    cfg.S3AccessKey,
+		SecretKey:    cfg.S3SecretKey,
+		UsePathStyle: cfg.S3UsePathStyle,
+	})
+	if err != nil {
+		t.Fatalf("connect object store: %v", err)
+	}
+	if err := objectStore.EnsureBucket(ctx); err != nil {
+		t.Fatalf("ensure bucket: %v", err)
+	}
+
+	ingestor := &ingest.Ingestor{
+		Documents:         db,
+		Objects:           objectStore,
+		MaxUploadBytes:    cfg.MaxUploadBytes,
+		DeleteAfterIngest: cfg.StorageDeleteAfterIngest,
+	}
+
+	srv := httptest.NewServer(httpapi.NewRouter(db, objectStore, ingestor, "*"))
 	t.Cleanup(srv.Close)
 	return srv, db
 }

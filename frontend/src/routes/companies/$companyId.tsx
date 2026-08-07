@@ -3,6 +3,7 @@ import { ArrowLeftIcon } from "lucide-react";
 import type React from "react";
 import { Controller, useForm, useWatch } from "react-hook-form";
 import { DeleteCompanyDialog } from "@/components/companies/delete-company-dialog";
+import { DocumentsPanel } from "@/components/companies/documents-panel";
 import { RouteSkeleton } from "@/components/layout/route-skeleton";
 import { Button } from "@/components/ui/button";
 import {
@@ -76,6 +77,18 @@ function CompanyRoute(): React.ReactElement {
         <CardFooter className="justify-end border-t">
           <DeleteCompanyDialog company={company} onDeleted={() => navigate({ to: "/companies" })} />
         </CardFooter>
+      </Card>
+
+      <Card>
+        <CardHeader>
+          <CardTitle>Documents</CardTitle>
+          <CardDescription>
+            Markdown files the client sent, on their way into the Company Context.
+          </CardDescription>
+        </CardHeader>
+        <CardContent>
+          <DocumentsPanel companyId={company.id} />
+        </CardContent>
       </Card>
     </div>
   );
