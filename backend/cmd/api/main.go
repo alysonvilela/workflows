@@ -2,8 +2,9 @@ package main
 
 import (
 	"context"
-	"log"
+	"log/slog"
 	"net/http"
+	"os"
 	"os/signal"
 	"syscall"
 	"time"
@@ -15,8 +16,11 @@ import (
 )
 
 func main() {
+	slog.SetDefault(slog.New(slog.NewJSONHandler(os.Stdout, nil)))
+
 	if err := run(); err != nil {
-		log.Fatal(err)
+		slog.Error("fatal", "error", err)
+		os.Exit(1)
 	}
 }
 
@@ -38,7 +42,7 @@ func run() error {
 	if err := db.Migrate(cfg.DatabaseURL); err != nil {
 		return err
 	}
-	log.Println("migrations applied")
+	slog.Info("migrations applied")
 
 	objectStore, err := storage.New(ctx, storage.Config{
 		Endpoint:     cfg.S3Endpoint,
@@ -65,7 +69,7 @@ func run() error {
 
 	serverErr := make(chan error, 1)
 	go func() {
-		log.Printf("listening on :%s", cfg.APIPort)
+		slog.Info("listening", "port", cfg.APIPort)
 		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 			serverErr <- err
 		}
@@ -75,7 +79,7 @@ func run() error {
 	case err := <-serverErr:
 		return err
 	case <-ctx.Done():
-		log.Println("shutting down, draining in-flight requests")
+		slog.Info("shutting down, draining in-flight requests")
 	}
 
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
