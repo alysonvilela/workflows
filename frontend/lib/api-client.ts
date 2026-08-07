@@ -252,6 +252,28 @@ async function getDocument(companyId: string, id: string): Promise<Result<Docume
   return result.ok ? ok(fromDocumentDTO(result.value.data)) : result;
 }
 
+async function deleteDocument(companyId: string, id: string): Promise<Result<void, ApiError>> {
+  return request<void>(`/companies/${companyId}/documents/${id}`, { method: "DELETE" });
+}
+
+async function resummariseDocument(
+  companyId: string,
+  id: string,
+): Promise<Result<Document, ApiError>> {
+  const result = await request<{ data: DocumentDTO }>(
+    `/companies/${companyId}/documents/${id}/resummarise`,
+    { method: "POST" },
+  );
+  return result.ok ? ok(fromDocumentDTO(result.value.data)) : result;
+}
+
+/* ── company context ─────────────────────────────────────────────────── */
+
+async function getCompanyContext(companyId: string): Promise<Result<string, ApiError>> {
+  const result = await request<{ data: { text: string } }>(`/companies/${companyId}/context`);
+  return result.ok ? ok(result.value.data.text) : result;
+}
+
 export interface UploadFileResult {
   filename: string;
   document: Document | null;
@@ -310,4 +332,7 @@ export const api = {
   listDocuments,
   getDocument,
   uploadDocuments,
+  deleteDocument,
+  resummariseDocument,
+  getCompanyContext,
 };

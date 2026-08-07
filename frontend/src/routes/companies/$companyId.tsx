@@ -2,6 +2,7 @@ import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
 import { ArrowLeftIcon } from "lucide-react";
 import type React from "react";
 import { Controller, useForm, useWatch } from "react-hook-form";
+import { CompanyContextPanel } from "@/components/companies/company-context-panel";
 import { DeleteCompanyDialog } from "@/components/companies/delete-company-dialog";
 import { DocumentsPanel } from "@/components/companies/documents-panel";
 import { RouteSkeleton } from "@/components/layout/route-skeleton";
@@ -88,6 +89,18 @@ function CompanyRoute(): React.ReactElement {
         </CardHeader>
         <CardContent>
           <DocumentsPanel companyId={company.id} />
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader>
+          <CardTitle>Company Context</CardTitle>
+          <CardDescription>
+            Exactly the text every prompt reads — one entry per ready Document.
+          </CardDescription>
+        </CardHeader>
+        <CardContent>
+          <CompanyContextPanel companyId={company.id} />
         </CardContent>
       </Card>
     </div>

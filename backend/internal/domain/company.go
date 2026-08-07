@@ -20,6 +20,18 @@ type Company struct {
 	UpdatedAt     time.Time
 }
 
+// RenderCompanyContext concatenates a Company's context entries into the
+// single block of text that goes into every prompt (ADR-0001). Order
+// follows entries, which the store keeps in first-write order — a
+// re-summarise replaces an entry in place rather than moving it to the end.
+func RenderCompanyContext(entries []CompanyContextEntry) string {
+	texts := make([]string, len(entries))
+	for i, e := range entries {
+		texts[i] = e.Text
+	}
+	return strings.Join(texts, "\n\n---\n\n")
+}
+
 // ValidateCompanyName trims the name and checks it against the rules the
 // frontend surfaces inline, next to the field.
 func ValidateCompanyName(name string) error {

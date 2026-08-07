@@ -26,7 +26,7 @@ type DocumentStore interface {
 	FindDocumentByChecksum(ctx context.Context, companyID, checksum string) (domain.Document, error)
 	CreateDocumentIfNew(ctx context.Context, companyID, s3Key, title, kind, checksum string) (doc domain.Document, created bool, err error)
 	ClaimPendingDocuments(ctx context.Context, limit int) ([]domain.Document, error)
-	MarkDocumentReady(ctx context.Context, id, rawText string, summary domain.DocumentSummary) (domain.Document, error)
+	MarkDocumentReady(ctx context.Context, doc domain.Document, rawText string, summary domain.DocumentSummary) (domain.Document, error)
 	MarkDocumentFailed(ctx context.Context, id, reason string) (domain.Document, error)
 }
 
@@ -124,7 +124,7 @@ func (in *Ingestor) Process(ctx context.Context, doc domain.Document) (domain.Do
 		return failed, nil
 	}
 
-	ready, err := in.Documents.MarkDocumentReady(ctx, doc.ID, rawText, summary)
+	ready, err := in.Documents.MarkDocumentReady(ctx, doc, rawText, summary)
 	if err != nil {
 		return domain.Document{}, fmt.Errorf("ingest: mark %s ready: %w", doc.Title, err)
 	}
@@ -135,6 +135,31 @@ func (in *Ingestor) Process(ctx context.Context, doc domain.Document) (domain.Do
 		}
 	}
 
+	return ready, nil
+}
+
+// Resummarise reprocesses a Document's already-stored raw_text through the
+// summariser, without touching object storage or re-running its Parse
+// Strategy — the original upload may already be gone under
+// STORAGE_DELETE_AFTER_INGEST, and re-parsing was never the point of a
+// re-summarise. The caller (the resummarise HTTP handler) is responsible
+// for only calling this once doc.RawText is set. Company Context is
+// updated the same way a first summary is: MarkDocumentReady replaces the
+// existing entry for doc.ID in place.
+func (in *Ingestor) Resummarise(ctx context.Context, doc domain.Document) (domain.Document, error) {
+	if doc.RawText == nil {
+		return domain.Document{}, fmt.Errorf("ingest: %s has no parsed text to re-summarise", doc.Title)
+	}
+
+	summary, err := in.Summariser.Summarise(ctx, *doc.RawText)
+	if err != nil {
+		return domain.Document{}, fmt.Errorf("ingest: resummarise %s: %w", doc.Title, err)
+	}
+
+	ready, err := in.Documents.MarkDocumentReady(ctx, doc, *doc.RawText, summary)
+	if err != nil {
+		return domain.Document{}, fmt.Errorf("ingest: mark %s ready: %w", doc.Title, err)
+	}
 	return ready, nil
 }
 

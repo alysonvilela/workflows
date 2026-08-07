@@ -1,6 +1,7 @@
 package domain
 
 import (
+	"fmt"
 	"path/filepath"
 	"strings"
 	"time"
@@ -43,6 +44,40 @@ type DocumentSummary struct {
 	Pains         []string `json:"pains"`
 	Examples      []string `json:"examples"`
 	Opportunities []string `json:"opportunities"`
+}
+
+// CompanyContextEntry is one Document's contribution to a Company's
+// company_context — the jsonb array store.MarkDocumentReady rewrites under
+// a row lock on the owning Company (ADR-0003). DocumentID is what lets a
+// re-summarise replace an entry in place instead of duplicating it, and
+// lets a Document removal find the right entry to drop.
+type CompanyContextEntry struct {
+	DocumentID string `json:"document_id"`
+	Text       string `json:"text"`
+}
+
+// FormatCompanyContextEntry renders a Document's title and Summary as the
+// plain text a consultant — and, per ADR-0001, every prompt — reads. It is
+// the only place a Summary turns back into text after the summariser
+// produced it.
+func FormatCompanyContextEntry(title string, s DocumentSummary) string {
+	var b strings.Builder
+	fmt.Fprintf(&b, "## %s\n\n%s\n\n%s\n", title, s.Theme, s.Context)
+	writeBulletList(&b, "Topics", s.Topics)
+	writeBulletList(&b, "Pains", s.Pains)
+	writeBulletList(&b, "Examples", s.Examples)
+	writeBulletList(&b, "Opportunities", s.Opportunities)
+	return strings.TrimRight(b.String(), "\n")
+}
+
+func writeBulletList(b *strings.Builder, heading string, items []string) {
+	if len(items) == 0 {
+		return
+	}
+	fmt.Fprintf(b, "\n%s:\n", heading)
+	for _, item := range items {
+		fmt.Fprintf(b, "- %s\n", item)
+	}
 }
 
 // DetectDocumentKind maps a filename's extension to a supported Document

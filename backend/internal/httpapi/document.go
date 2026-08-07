@@ -18,6 +18,7 @@ import (
 type DocumentStore interface {
 	ListDocuments(ctx context.Context, companyID string, page, perPage int) ([]domain.Document, int, error)
 	GetDocument(ctx context.Context, companyID, id string) (domain.Document, error)
+	DeleteDocument(ctx context.Context, companyID, id string) error
 }
 
 func registerDocumentRoutes(r chi.Router, companies CompanyStore, documents DocumentStore, ingestor *ingest.Ingestor) {
@@ -25,6 +26,8 @@ func registerDocumentRoutes(r chi.Router, companies CompanyStore, documents Docu
 		r.Post("/", uploadDocumentsHandler(companies, ingestor))
 		r.Get("/", listDocumentsHandler(companies, documents))
 		r.Get("/{documentId}", getDocumentHandler(companies, documents))
+		r.Delete("/{documentId}", deleteDocumentHandler(companies, documents))
+		r.Post("/{documentId}/resummarise", resummariseDocumentHandler(companies, documents, ingestor))
 	})
 }
 
@@ -209,5 +212,60 @@ func getDocumentHandler(companies CompanyStore, documents DocumentStore) http.Ha
 			return
 		}
 		writeJSON(w, http.StatusOK, documentEnvelope{Data: newDocumentResponse(doc)})
+	}
+}
+
+// deleteDocumentHandler removes a Document and, in the same store
+// transaction, its entry in the Company Context.
+func deleteDocumentHandler(companies CompanyStore, documents DocumentStore) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		company, ok := companyOr404(w, r, companies)
+		if !ok {
+			return
+		}
+
+		err := documents.DeleteDocument(r.Context(), company.ID, chi.URLParam(r, "documentId"))
+		if err != nil {
+			if errors.Is(err, domain.ErrNotFound) {
+				writeError(w, http.StatusNotFound, "document not found")
+				return
+			}
+			writeError(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+		w.WriteHeader(http.StatusNoContent)
+	}
+}
+
+// resummariseDocumentHandler reprocesses a ready (or previously failed but
+// parsed) Document's stored raw_text through the summariser, without a
+// re-upload, and replaces its Company Context entry.
+func resummariseDocumentHandler(companies CompanyStore, documents DocumentStore, ingestor *ingest.Ingestor) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		company, ok := companyOr404(w, r, companies)
+		if !ok {
+			return
+		}
+
+		doc, err := documents.GetDocument(r.Context(), company.ID, chi.URLParam(r, "documentId"))
+		if err != nil {
+			if errors.Is(err, domain.ErrNotFound) {
+				writeError(w, http.StatusNotFound, "document not found")
+				return
+			}
+			writeStoreError(w, err)
+			return
+		}
+		if doc.RawText == nil {
+			writeError(w, http.StatusUnprocessableEntity, "document has not finished parsing yet")
+			return
+		}
+
+		updated, err := ingestor.Resummarise(r.Context(), doc)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+		writeJSON(w, http.StatusOK, documentEnvelope{Data: newDocumentResponse(updated)})
 	}
 }

@@ -9,6 +9,7 @@ import {
   AccordionItem,
   AccordionTrigger,
 } from "@/components/ui/accordion";
+import { DocumentActions } from "@/components/companies/document-actions";
 import { Badge } from "@/components/ui/badge";
 import { Empty, EmptyDescription, EmptyHeader, EmptyTitle } from "@/components/ui/empty";
 import { Spinner } from "@/components/ui/spinner";
@@ -127,7 +128,10 @@ function DocumentList({
             </span>
           </AccordionTrigger>
           <AccordionContent>
-            <DocumentDetail companyId={companyId} doc={doc} open={expanded.includes(doc.id)} />
+            <div className="flex flex-col gap-2">
+              <DocumentDetail companyId={companyId} doc={doc} open={expanded.includes(doc.id)} />
+              <DocumentActions companyId={companyId} doc={doc} />
+            </div>
           </AccordionContent>
         </AccordionItem>
       ))}

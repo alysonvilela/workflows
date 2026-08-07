@@ -111,24 +111,84 @@ func (s *Store) ClaimPendingDocuments(ctx context.Context, limit int) ([]domain.
 	return docs, nil
 }
 
-func (s *Store) MarkDocumentReady(ctx context.Context, id, rawText string, summary domain.DocumentSummary) (domain.Document, error) {
+// MarkDocumentReady marks doc ready with rawText and summary, and folds the
+// summary into the owning Company's company_context in the same
+// transaction — the append ADR-0003 calls correct-by-SQL: the Company row
+// is locked with SELECT ... FOR UPDATE before the jsonb array is
+// read-modified-written, so two Documents finishing at once serialise
+// instead of one clobbering the other's entry. Called both for a
+// Document's first summary and for every re-summarise after it — doc.ID
+// already existing in the array means an in-place replace, not a
+// duplicate (see upsertContextEntry).
+func (s *Store) MarkDocumentReady(ctx context.Context, doc domain.Document, rawText string, summary domain.DocumentSummary) (domain.Document, error) {
 	summaryJSON, err := json.Marshal(summary)
 	if err != nil {
 		return domain.Document{}, fmt.Errorf("store: encode document summary: %w", err)
 	}
-	row := s.Pool.QueryRow(ctx, `
+	entryText := domain.FormatCompanyContextEntry(doc.Title, summary)
+
+	tx, err := s.Pool.Begin(ctx)
+	if err != nil {
+		return domain.Document{}, fmt.Errorf("store: mark document ready: begin: %w", err)
+	}
+	defer tx.Rollback(ctx)
+
+	mutate := func(entries []domain.CompanyContextEntry) []domain.CompanyContextEntry {
+		return upsertContextEntry(entries, doc.ID, entryText)
+	}
+	if err := lockAndMutateCompanyContext(ctx, tx, doc.CompanyID, mutate); err != nil {
+		return domain.Document{}, err
+	}
+
+	row := tx.QueryRow(ctx, `
 		UPDATE documents
 		SET status = 'ready', raw_text = $2, summary = $3, error = NULL, updated_at = now()
 		WHERE id = $1
-		RETURNING `+documentColumns, id, rawText, summaryJSON)
-	d, err := scanDocument(row)
+		RETURNING `+documentColumns, doc.ID, rawText, summaryJSON)
+	ready, err := scanDocument(row)
 	if isNotFoundError(err) {
 		return domain.Document{}, domain.ErrNotFound
 	}
 	if err != nil {
 		return domain.Document{}, fmt.Errorf("store: mark document ready: %w", err)
 	}
-	return d, nil
+
+	if err := tx.Commit(ctx); err != nil {
+		return domain.Document{}, fmt.Errorf("store: mark document ready: commit: %w", err)
+	}
+	return ready, nil
+}
+
+// DeleteDocument removes a Document and its Company Context entry in the
+// same transaction, under the same row lock MarkDocumentReady appends
+// under — so a delete can never race a concurrent ingestion into
+// resurrecting the entry it just removed, or vice versa.
+func (s *Store) DeleteDocument(ctx context.Context, companyID, id string) error {
+	tx, err := s.Pool.Begin(ctx)
+	if err != nil {
+		return fmt.Errorf("store: delete document: begin: %w", err)
+	}
+	defer tx.Rollback(ctx)
+
+	mutate := func(entries []domain.CompanyContextEntry) []domain.CompanyContextEntry {
+		return removeContextEntry(entries, id)
+	}
+	if err := lockAndMutateCompanyContext(ctx, tx, companyID, mutate); err != nil {
+		return err
+	}
+
+	tag, err := tx.Exec(ctx, `DELETE FROM documents WHERE id = $1 AND company_id = $2`, id, companyID)
+	if err != nil {
+		return fmt.Errorf("store: delete document: %w", err)
+	}
+	if tag.RowsAffected() == 0 {
+		return domain.ErrNotFound
+	}
+
+	if err := tx.Commit(ctx); err != nil {
+		return fmt.Errorf("store: delete document: commit: %w", err)
+	}
+	return nil
 }
 
 func (s *Store) MarkDocumentFailed(ctx context.Context, id, reason string) (domain.Document, error) {

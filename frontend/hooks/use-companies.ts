@@ -25,3 +25,16 @@ export function useCompany(id: string) {
     },
   });
 }
+
+// The exact text that goes into every prompt (ADR-0001) — what a consultant
+// reads is what the LLM reads.
+export function useCompanyContext(id: string) {
+  return useQuery({
+    queryKey: queryKeys.companies.context(id),
+    queryFn: async () => {
+      const result = await api.getCompanyContext(id);
+      if (!result.ok) throw new Error(result.error.message);
+      return result.value;
+    },
+  });
+}

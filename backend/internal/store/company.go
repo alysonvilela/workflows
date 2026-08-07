@@ -122,6 +122,26 @@ func (s *Store) RenameCompany(ctx context.Context, id, name string) (domain.Comp
 	return company, nil
 }
 
+// GetCompanyContext reads a Company's company_context and renders it as the
+// text a consultant — and every prompt — reads (ADR-0001). No row lock: a
+// read racing an in-flight append just sees the state before or after it,
+// which is fine for a read that isn't itself the write.
+func (s *Store) GetCompanyContext(ctx context.Context, id string) (string, error) {
+	var raw []byte
+	err := s.Pool.QueryRow(ctx, `SELECT company_context FROM companies WHERE id = $1`, id).Scan(&raw)
+	if isNotFoundError(err) {
+		return "", domain.ErrNotFound
+	}
+	if err != nil {
+		return "", fmt.Errorf("store: get company context: %w", err)
+	}
+	entries, err := decodeContextEntries(raw)
+	if err != nil {
+		return "", err
+	}
+	return domain.RenderCompanyContext(entries), nil
+}
+
 func (s *Store) DeleteCompany(ctx context.Context, id string) error {
 	tag, err := s.Pool.Exec(ctx, `DELETE FROM companies WHERE id = $1`, id)
 	if isNotFoundError(err) {

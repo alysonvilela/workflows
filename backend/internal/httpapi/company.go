@@ -18,6 +18,7 @@ type CompanyStore interface {
 	GetCompany(ctx context.Context, id string) (domain.Company, error)
 	RenameCompany(ctx context.Context, id, name string) (domain.Company, error)
 	DeleteCompany(ctx context.Context, id string) error
+	GetCompanyContext(ctx context.Context, id string) (string, error)
 }
 
 func registerCompanyRoutes(r chi.Router, store CompanyStore) {
@@ -28,6 +29,7 @@ func registerCompanyRoutes(r chi.Router, store CompanyStore) {
 			r.Get("/", getCompanyHandler(store))
 			r.Patch("/", renameCompanyHandler(store))
 			r.Delete("/", deleteCompanyHandler(store))
+			r.Get("/context", getCompanyContextHandler(store))
 		})
 	})
 }
@@ -145,6 +147,33 @@ func deleteCompanyHandler(store CompanyStore) http.HandlerFunc {
 			return
 		}
 		w.WriteHeader(http.StatusNoContent)
+	}
+}
+
+type companyContextResponse struct {
+	Text string `json:"text"`
+}
+
+type companyContextEnvelope struct {
+	Data companyContextResponse `json:"data"`
+}
+
+// getCompanyContextHandler returns the Company Context exactly as it goes
+// into a prompt — one concatenated block of text, not the underlying jsonb
+// entries — so the interface shows a consultant precisely what the LLM
+// reads (ADR-0001).
+func getCompanyContextHandler(store CompanyStore) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		company, ok := companyOr404(w, r, store)
+		if !ok {
+			return
+		}
+		text, err := store.GetCompanyContext(r.Context(), company.ID)
+		if err != nil {
+			writeStoreError(w, err)
+			return
+		}
+		writeJSON(w, http.StatusOK, companyContextEnvelope{Data: companyContextResponse{Text: text}})
 	}
 }
 
