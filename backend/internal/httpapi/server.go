@@ -3,7 +3,6 @@ package httpapi
 
 import (
 	"context"
-	"encoding/json"
 	"net/http"
 	"strings"
 
@@ -16,7 +15,14 @@ type Pinger interface {
 	Ping(ctx context.Context) error
 }
 
-func NewRouter(db Pinger, objectStore Pinger, corsAllowedOrigins string) http.Handler {
+// DB is the full seam handlers depend on for database access: liveness plus
+// the per-entity stores (only Company today).
+type DB interface {
+	Pinger
+	CompanyStore
+}
+
+func NewRouter(db DB, objectStore Pinger, corsAllowedOrigins string) http.Handler {
 	r := chi.NewRouter()
 	r.Use(middleware.RequestID)
 	r.Use(middleware.RealIP)
@@ -25,6 +31,7 @@ func NewRouter(db Pinger, objectStore Pinger, corsAllowedOrigins string) http.Ha
 	r.Use(cors(corsAllowedOrigins))
 
 	r.Get("/health", healthHandler(db, objectStore))
+	registerCompanyRoutes(r, db)
 
 	return r
 }
@@ -73,8 +80,6 @@ func healthHandler(db Pinger, objectStore Pinger) http.HandlerFunc {
 			code = http.StatusServiceUnavailable
 		}
 
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(code)
-		_ = json.NewEncoder(w).Encode(body)
+		writeJSON(w, code, body)
 	}
 }
