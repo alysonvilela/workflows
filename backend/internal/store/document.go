@@ -4,12 +4,18 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"time"
 
 	"github.com/discovery/backend/internal/domain"
 	"github.com/jackc/pgx/v5"
 )
 
 const documentColumns = `id, company_id, s3_key, title, kind, raw_text, summary, status, error, checksum, created_at, updated_at`
+
+// documentClaimLease bounds how long a worker may hold a Document claimed
+// in status 'parsing' before another worker is allowed to take it back —
+// what makes a crash mid-Process recoverable instead of a stuck Document.
+const documentClaimLease = 5 * time.Minute
 
 func scanDocument(row pgx.Row) (domain.Document, error) {
 	var d domain.Document
@@ -65,6 +71,44 @@ func (s *Store) CreateDocumentIfNew(ctx context.Context, companyID, s3Key, title
 		return domain.Document{}, false, fmt.Errorf("store: create document: %w", err)
 	}
 	return d, true, nil
+}
+
+// ClaimPendingDocuments finds up to limit Documents staged (status
+// 'parsing') but not currently being processed — either never claimed, or
+// claimed past documentClaimLease by a worker that crashed or was
+// redeployed mid-Process — and marks them claimed in one atomic step.
+// SKIP LOCKED is what lets several worker ticks (in this process or a
+// future replica) poll concurrently without claiming the same row twice;
+// this is the correctness guard, not anything held in memory (ADR-0003).
+func (s *Store) ClaimPendingDocuments(ctx context.Context, limit int) ([]domain.Document, error) {
+	rows, err := s.Pool.Query(ctx, `
+		UPDATE documents
+		SET claimed_at = now()
+		WHERE id IN (
+			SELECT id FROM documents
+			WHERE status = 'parsing' AND (claimed_at IS NULL OR claimed_at < now() - $1::interval)
+			ORDER BY created_at
+			LIMIT $2
+			FOR UPDATE SKIP LOCKED
+		)
+		RETURNING `+documentColumns, documentClaimLease.String(), limit)
+	if err != nil {
+		return nil, fmt.Errorf("store: claim pending documents: %w", err)
+	}
+	defer rows.Close()
+
+	docs := []domain.Document{}
+	for rows.Next() {
+		d, err := scanDocument(rows)
+		if err != nil {
+			return nil, fmt.Errorf("store: scan claimed document: %w", err)
+		}
+		docs = append(docs, d)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("store: claim pending documents: %w", err)
+	}
+	return docs, nil
 }
 
 func (s *Store) MarkDocumentReady(ctx context.Context, id, rawText string, summary domain.DocumentSummary) (domain.Document, error) {

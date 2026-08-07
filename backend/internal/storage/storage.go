@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"io"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	awsconfig "github.com/aws/aws-sdk-go-v2/config"
@@ -69,6 +70,26 @@ func (s *Storage) Put(ctx context.Context, key string, body []byte, contentType 
 		return fmt.Errorf("storage: put %q: %w", key, err)
 	}
 	return nil
+}
+
+// Get fetches key's full contents. Called by the ingestion worker to get
+// back the bytes a Stage call already put here — they do not survive past
+// the HTTP request that staged them.
+func (s *Storage) Get(ctx context.Context, key string) ([]byte, error) {
+	out, err := s.client.GetObject(ctx, &s3.GetObjectInput{
+		Bucket: aws.String(s.bucket),
+		Key:    aws.String(key),
+	})
+	if err != nil {
+		return nil, fmt.Errorf("storage: get %q: %w", key, err)
+	}
+	defer out.Body.Close()
+
+	data, err := io.ReadAll(out.Body)
+	if err != nil {
+		return nil, fmt.Errorf("storage: read %q: %w", key, err)
+	}
+	return data, nil
 }
 
 // Delete removes key. Called once a Document's raw_text has been extracted,

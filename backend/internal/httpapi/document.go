@@ -145,7 +145,7 @@ func uploadDocumentsHandler(companies CompanyStore, ingestor *ingest.Ingestor) h
 		var g errgroup.Group
 		for i, f := range files {
 			g.Go(func() error {
-				doc, err := ingestor.Ingest(r.Context(), company.ID, f.filename, f.data)
+				doc, err := ingestor.Stage(r.Context(), company.ID, f.filename, f.data)
 				if err != nil {
 					message := err.Error()
 					results[i] = uploadResult{Filename: f.filename, Error: &message}

@@ -2,11 +2,12 @@
 
 **What to build:** the consultant starts a Discovery Run over a Company, choosing an optional theme and how many Opportunities to explore. The root Node reads the entire Company Context, finds and ranks Opportunities, and the first generation of Nodes is born from the best ones.
 
-**Blocked by:** 06
+**Blocked by:** 06, 16
 
 **Status:** ready-for-agent
 
-- [ ] River integrated into the same binary, with its own migrations and `RIVER_MAX_WORKERS` from `.env`
+River is already integrated by ticket 16 (it landed early, for Document ingestion) — this ticket only adds the Node job kind on top of it.
+
 - [ ] One job per Node, inserted with `InsertTx` in the same transaction that inserts the Node — either both happen or neither
 - [ ] Atomic Node claim at the start of the worker; zero rows returns `nil`, never an error
 - [ ] `scan_opportunities` receives the entire Company Context in its prompt and answers with exactly one tool call

@@ -76,6 +76,19 @@ func run() error {
 		DeleteAfterIngest: cfg.StorageDeleteAfterIngest,
 	}
 
+	worker := &ingest.Worker{
+		Ingestor:     ingestor,
+		PollInterval: time.Second,
+		// No point claiming more Documents than can have an LLM call running
+		// at once — LLM_MAX_CONCURRENT is already the real bottleneck.
+		BatchSize: cfg.LLMMaxConcurrent,
+	}
+	workerDone := make(chan struct{})
+	go func() {
+		defer close(workerDone)
+		worker.Run(ctx)
+	}()
+
 	router := httpapi.NewRouter(db, objectStore, ingestor, cfg.CORSAllowedOrigins)
 
 	srv := &http.Server{
@@ -101,5 +114,17 @@ func run() error {
 
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
-	return srv.Shutdown(shutdownCtx)
+	if err := srv.Shutdown(shutdownCtx); err != nil {
+		return err
+	}
+
+	// worker.Run already stopped claiming new batches when ctx was cancelled
+	// above; this just waits for whatever it had already claimed to finish
+	// processing, same "drain, don't kill" contract as srv.Shutdown.
+	select {
+	case <-workerDone:
+	case <-time.After(15 * time.Second):
+		slog.Warn("ingest worker did not drain in time")
+	}
+	return nil
 }

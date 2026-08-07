@@ -8,8 +8,10 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
 	"github.com/discovery/backend/internal/config"
+	"github.com/discovery/backend/internal/llm"
 )
 
 type documentDoc struct {
@@ -96,6 +98,42 @@ func uploadOne(t *testing.T, srv *httptest.Server, companyID, filename string, c
 	return env.Data[0]
 }
 
+func getDocument(t *testing.T, srv *httptest.Server, companyID, documentID string) documentDoc {
+	t.Helper()
+	resp, err := http.Get(srv.URL + "/companies/" + companyID + "/documents/" + documentID)
+	if err != nil {
+		t.Fatalf("get document: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("get document status = %d", resp.StatusCode)
+	}
+	var env documentEnvelopeDoc
+	if err := json.NewDecoder(resp.Body).Decode(&env); err != nil {
+		t.Fatalf("decode get response: %v", err)
+	}
+	return env.Data
+}
+
+// waitForTerminalStatus polls a Document until Process — running in the
+// background worker started by the test server — has taken it out of
+// 'parsing'. Upload itself (Stage) never waits on this; it is what a
+// consultant's own polling would observe, matching the frontend.
+func waitForTerminalStatus(t *testing.T, srv *httptest.Server, companyID, documentID string) documentDoc {
+	t.Helper()
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		doc := getDocument(t, srv, companyID, documentID)
+		if doc.Status != "parsing" {
+			return doc
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("document %s still %q after 5s", documentID, doc.Status)
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+}
+
 func TestUploadDocument_MarkdownBecomesReadyWithRawText(t *testing.T) {
 	srv, _ := newTestServer(t)
 	company := createCompany(t, srv, "Aurora Logistics")
@@ -108,7 +146,8 @@ func TestUploadDocument_MarkdownBecomesReadyWithRawText(t *testing.T) {
 	if result.Document == nil {
 		t.Fatal("expected a document in the result")
 	}
-	doc := *result.Document
+
+	doc := waitForTerminalStatus(t, srv, company.ID, result.Document.ID)
 	if doc.Status != "ready" {
 		t.Errorf("status = %q, want %q", doc.Status, "ready")
 	}
@@ -118,22 +157,53 @@ func TestUploadDocument_MarkdownBecomesReadyWithRawText(t *testing.T) {
 	if doc.Error != nil {
 		t.Errorf("expected no error on a ready document, got %q", *doc.Error)
 	}
+	if doc.RawText == nil || *doc.RawText != "# Sales process\n\nCold call, then demo." {
+		t.Errorf("raw_text = %v, want the uploaded content", doc.RawText)
+	}
+}
 
-	getResp, err := http.Get(srv.URL + "/companies/" + company.ID + "/documents/" + doc.ID)
-	if err != nil {
-		t.Fatalf("get document: %v", err)
+// TestUploadDocument_RespondsBeforeProcessingCompletes is the async
+// contract itself: upload must not block on the summariser's LLM call.
+func TestUploadDocument_RespondsBeforeProcessingCompletes(t *testing.T) {
+	slow := &slowProvider{inner: defaultScriptedProvider(), delay: 300 * time.Millisecond}
+	srv, _ := newTestServerWithProvider(t, slow)
+	company := createCompany(t, srv, "Torque Industrial")
+
+	start := time.Now()
+	result := uploadOne(t, srv, company.ID, "process.md", []byte("# Process\n\nDetails."))
+	elapsed := time.Since(start)
+
+	if elapsed >= slow.delay {
+		t.Errorf("upload took %s, want well under the %s summariser delay — Stage must not wait on Process", elapsed, slow.delay)
 	}
-	defer getResp.Body.Close()
-	if getResp.StatusCode != http.StatusOK {
-		t.Fatalf("get document status = %d", getResp.StatusCode)
+	if result.Document == nil {
+		t.Fatal("expected a document in the result")
 	}
-	var env documentEnvelopeDoc
-	if err := json.NewDecoder(getResp.Body).Decode(&env); err != nil {
-		t.Fatalf("decode get response: %v", err)
+	if result.Document.Status != "parsing" {
+		t.Errorf("status right after upload = %q, want %q (still unprocessed)", result.Document.Status, "parsing")
 	}
-	if env.Data.RawText == nil || *env.Data.RawText != "# Sales process\n\nCold call, then demo." {
-		t.Errorf("raw_text = %v, want the uploaded content", env.Data.RawText)
+
+	doc := waitForTerminalStatus(t, srv, company.ID, result.Document.ID)
+	if doc.Status != "ready" {
+		t.Errorf("status after the background worker runs = %q, want %q", doc.Status, "ready")
 	}
+}
+
+// slowProvider adds an artificial delay before delegating — the fixture
+// TestUploadDocument_RespondsBeforeProcessingCompletes uses to prove
+// upload does not wait on the Provider call.
+type slowProvider struct {
+	inner llm.Provider
+	delay time.Duration
+}
+
+func (p *slowProvider) Complete(ctx context.Context, model, prompt string, tools []llm.Tool) (llm.ToolCall, error) {
+	select {
+	case <-time.After(p.delay):
+	case <-ctx.Done():
+		return llm.ToolCall{}, ctx.Err()
+	}
+	return p.inner.Complete(ctx, model, prompt, tools)
 }
 
 func TestUploadDocument_CSVBecomesReadyWithRawText(t *testing.T) {
@@ -148,7 +218,8 @@ func TestUploadDocument_CSVBecomesReadyWithRawText(t *testing.T) {
 	if result.Document == nil {
 		t.Fatal("expected a document in the result")
 	}
-	doc := *result.Document
+
+	doc := waitForTerminalStatus(t, srv, company.ID, result.Document.ID)
 	if doc.Status != "ready" {
 		t.Errorf("status = %q, want %q", doc.Status, "ready")
 	}
@@ -158,18 +229,8 @@ func TestUploadDocument_CSVBecomesReadyWithRawText(t *testing.T) {
 	if doc.Error != nil {
 		t.Errorf("expected no error on a ready document, got %q", *doc.Error)
 	}
-
-	getResp, err := http.Get(srv.URL + "/companies/" + company.ID + "/documents/" + doc.ID)
-	if err != nil {
-		t.Fatalf("get document: %v", err)
-	}
-	defer getResp.Body.Close()
-	var env documentEnvelopeDoc
-	if err := json.NewDecoder(getResp.Body).Decode(&env); err != nil {
-		t.Fatalf("decode get response: %v", err)
-	}
-	if env.Data.RawText == nil || *env.Data.RawText != "subject,minutes\nInvoice mismatch,45" {
-		t.Errorf("raw_text = %v, want the uploaded content unchanged", env.Data.RawText)
+	if doc.RawText == nil || *doc.RawText != "subject,minutes\nInvoice mismatch,45" {
+		t.Errorf("raw_text = %v, want the uploaded content unchanged", doc.RawText)
 	}
 }
 
@@ -185,7 +246,8 @@ func TestUploadDocument_MalformedCSVRecordsFailureOnTheDocument(t *testing.T) {
 	if result.Document == nil {
 		t.Fatal("expected a document even though parsing failed")
 	}
-	doc := *result.Document
+
+	doc := waitForTerminalStatus(t, srv, company.ID, result.Document.ID)
 	if doc.Status != "failed" {
 		t.Errorf("status = %q, want %q", doc.Status, "failed")
 	}
@@ -235,7 +297,8 @@ func TestUploadDocument_UnreadableFileRecordsFailureOnTheDocument(t *testing.T) 
 	if result.Document == nil {
 		t.Fatal("expected a document even though parsing failed")
 	}
-	doc := *result.Document
+
+	doc := waitForTerminalStatus(t, srv, company.ID, result.Document.ID)
 	if doc.Status != "failed" {
 		t.Errorf("status = %q, want %q", doc.Status, "failed")
 	}

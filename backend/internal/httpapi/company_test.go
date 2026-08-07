@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
 	"github.com/discovery/backend/internal/config"
 	"github.com/discovery/backend/internal/httpapi"
@@ -18,8 +19,38 @@ import (
 
 // newTestServer boots the router against real Postgres and real rustfs
 // (Seam 1): faking either would mean testing the fakes instead of the
-// system.
+// system. Document processing runs for real, in the background, against a
+// ScriptedProvider default reply — see newTestServerWithProvider for tests
+// that need to control the Provider directly (e.g. to assert that upload
+// does not wait on it).
 func newTestServer(t *testing.T) (*httptest.Server, *store.Store) {
+	t.Helper()
+	return newTestServerWithProvider(t, defaultScriptedProvider())
+}
+
+// defaultScriptedProvider is the summariser reply every test gets unless it
+// asks for something else — most tests only care that ingestion reaches
+// 'ready', not what the model "said".
+func defaultScriptedProvider() *llm.ScriptedProvider {
+	provider := llm.NewScriptedProvider()
+	provider.SetDefault(llm.SummariseToolName, llm.ToolCall{
+		Name: llm.SummariseToolName,
+		Arguments: json.RawMessage(`{
+			"theme": "test fixture",
+			"context": "context assembled by the ScriptedProvider test default",
+			"topics": ["topic"],
+			"pains": ["pain"],
+			"examples": ["example"],
+			"opportunities": ["opportunity"]
+		}`),
+	})
+	return provider
+}
+
+// newTestServerWithProvider is newTestServer with the LLM Provider
+// supplied by the caller, for tests that need to script or delay the
+// summariser's reply directly (see document_test.go's slow-provider test).
+func newTestServerWithProvider(t *testing.T, provider llm.Provider) (*httptest.Server, *store.Store) {
 	t.Helper()
 	ctx := context.Background()
 
@@ -56,19 +87,6 @@ func newTestServer(t *testing.T) (*httptest.Server, *store.Store) {
 		t.Fatalf("ensure bucket: %v", err)
 	}
 
-	provider := llm.NewScriptedProvider()
-	provider.SetDefault(llm.SummariseToolName, llm.ToolCall{
-		Name: llm.SummariseToolName,
-		Arguments: json.RawMessage(`{
-			"theme": "test fixture",
-			"context": "context assembled by the ScriptedProvider test default",
-			"topics": ["topic"],
-			"pains": ["pain"],
-			"examples": ["example"],
-			"opportunities": ["opportunity"]
-		}`),
-	})
-
 	ingestor := &ingest.Ingestor{
 		Documents:         db,
 		Objects:           objectStore,
@@ -76,6 +94,21 @@ func newTestServer(t *testing.T) (*httptest.Server, *store.Store) {
 		MaxUploadBytes:    cfg.MaxUploadBytes,
 		DeleteAfterIngest: cfg.StorageDeleteAfterIngest,
 	}
+
+	worker := &ingest.Worker{Ingestor: ingestor, PollInterval: 20 * time.Millisecond, BatchSize: 8}
+	workerCtx, cancelWorker := context.WithCancel(context.Background())
+	workerDone := make(chan struct{})
+	go func() {
+		defer close(workerDone)
+		worker.Run(workerCtx)
+	}()
+	// Registered after db's own Cleanup (above), so cleanups run in the
+	// right order (LIFO): stop the worker and let its current tick finish
+	// before the pool it depends on is closed underneath it.
+	t.Cleanup(func() {
+		cancelWorker()
+		<-workerDone
+	})
 
 	srv := httptest.NewServer(httpapi.NewRouter(db, objectStore, ingestor, "*"))
 	t.Cleanup(srv.Close)
