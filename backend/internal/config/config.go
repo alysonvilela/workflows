@@ -33,6 +33,12 @@ type Config struct {
 	LLMSummaryModel   string
 	LLMTimeoutSeconds int
 	LLMMaxConcurrent  int
+
+	// WorkerEnabled turns off River's Queues (this process only inserts
+	// jobs, never works them) so a deployment can run HTTP-only replicas
+	// alongside dedicated worker replicas.
+	WorkerEnabled   bool
+	RiverMaxWorkers int
 }
 
 // Load reads the root .env (if present — a real deployment may set the
@@ -69,6 +75,7 @@ func Load() (Config, error) {
 	maxUploadBytesStr := req("MAX_UPLOAD_BYTES")
 	llmTimeoutSecondsStr := req("LLM_TIMEOUT_SECONDS")
 	llmMaxConcurrentStr := req("LLM_MAX_CONCURRENT")
+	riverMaxWorkersStr := req("RIVER_MAX_WORKERS")
 
 	if len(missing) > 0 {
 		return Config{}, fmt.Errorf("config: missing required environment variable(s): %v (copy .env.example to .env and fill them in)", missing)
@@ -98,6 +105,14 @@ func Load() (Config, error) {
 		return Config{}, fmt.Errorf("config: LLM_MAX_CONCURRENT must be an integer: %w", err)
 	}
 	cfg.LLMMaxConcurrent = llmMaxConcurrent
+
+	riverMaxWorkers, err := strconv.Atoi(riverMaxWorkersStr)
+	if err != nil {
+		return Config{}, fmt.Errorf("config: RIVER_MAX_WORKERS must be an integer: %w", err)
+	}
+	cfg.RiverMaxWorkers = riverMaxWorkers
+
+	cfg.WorkerEnabled = boolEnv("WORKER_ENABLED", true)
 
 	return cfg, nil
 }

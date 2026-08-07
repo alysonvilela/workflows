@@ -15,6 +15,8 @@ import (
 	"github.com/discovery/backend/internal/llm"
 	"github.com/discovery/backend/internal/storage"
 	"github.com/discovery/backend/internal/store"
+	"github.com/riverqueue/river"
+	"github.com/riverqueue/river/riverdriver/riverpgxv5"
 )
 
 // newTestServer boots the router against real Postgres and real rustfs
@@ -68,6 +70,9 @@ func newTestServerWithProvider(t *testing.T, provider llm.Provider) (*httptest.S
 	if err := db.Migrate(cfg.DatabaseURL); err != nil {
 		t.Fatalf("migrate: %v", err)
 	}
+	if err := db.MigrateRiver(ctx); err != nil {
+		t.Fatalf("migrate river schema: %v", err)
+	}
 	if _, err := db.Pool.Exec(ctx, "TRUNCATE companies CASCADE"); err != nil {
 		t.Fatalf("truncate: %v", err)
 	}
@@ -95,24 +100,49 @@ func newTestServerWithProvider(t *testing.T, provider llm.Provider) (*httptest.S
 		DeleteAfterIngest: cfg.StorageDeleteAfterIngest,
 	}
 
-	worker := &ingest.Worker{Ingestor: ingestor, PollInterval: 20 * time.Millisecond, BatchSize: 8}
-	workerCtx, cancelWorker := context.WithCancel(context.Background())
-	workerDone := make(chan struct{})
-	go func() {
-		defer close(workerDone)
-		worker.Run(workerCtx)
-	}()
-	// Registered after db's own Cleanup (above), so cleanups run in the
-	// right order (LIFO): stop the worker and let its current tick finish
-	// before the pool it depends on is closed underneath it.
-	t.Cleanup(func() {
-		cancelWorker()
-		<-workerDone
-	})
+	startRiverClient(t, ctx, db, ingestor)
 
 	srv := httptest.NewServer(httpapi.NewRouter(db, objectStore, ingestor, "*"))
 	t.Cleanup(srv.Close)
 	return srv, db
+}
+
+// startRiverClient builds and starts the River client every ingestion test
+// server needs, registers it on db.River so CreateDocumentIfNew can
+// enqueue jobs, and stops it on cleanup — shared by newTestServerWithProvider
+// and company_context_test.go's ingestOneWithDeleteAfterIngest, which
+// otherwise duplicate this bootstrap identically.
+func startRiverClient(t *testing.T, ctx context.Context, db *store.Store, ingestor *ingest.Ingestor) {
+	t.Helper()
+
+	workers := river.NewWorkers()
+	river.AddWorker(workers, &ingest.ProcessDocumentWorker{Ingestor: ingestor})
+	riverClient, err := river.NewClient(riverpgxv5.New(db.Pool), &river.Config{
+		Queues: map[string]river.QueueConfig{
+			// A tight FetchPollInterval keeps tests fast even if this
+			// client's LISTEN/NOTIFY fetch is delayed under load —
+			// production leaves this at River's default.
+			river.QueueDefault: {MaxWorkers: 8, FetchPollInterval: 20 * time.Millisecond, FetchCooldown: 5 * time.Millisecond},
+		},
+		Workers: workers,
+	})
+	if err != nil {
+		t.Fatalf("river client: %v", err)
+	}
+	db.River = riverClient
+	if err := riverClient.Start(ctx); err != nil {
+		t.Fatalf("river client start: %v", err)
+	}
+	// Registered after db's own Cleanup (in the caller), so cleanups run in
+	// the right order (LIFO): stop the River client and let its in-flight
+	// job finish before the pool it depends on is closed underneath it.
+	t.Cleanup(func() {
+		stopCtx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+		defer cancel()
+		if err := riverClient.Stop(stopCtx); err != nil {
+			t.Errorf("river client stop: %v", err)
+		}
+	})
 }
 
 type companyDoc struct {

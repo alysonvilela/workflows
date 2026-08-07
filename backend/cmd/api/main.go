@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"os"
@@ -15,6 +16,8 @@ import (
 	"github.com/discovery/backend/internal/llm"
 	"github.com/discovery/backend/internal/storage"
 	"github.com/discovery/backend/internal/store"
+	"github.com/riverqueue/river"
+	"github.com/riverqueue/river/riverdriver/riverpgxv5"
 )
 
 func main() {
@@ -42,6 +45,9 @@ func run() error {
 	defer db.Close()
 
 	if err := db.Migrate(cfg.DatabaseURL); err != nil {
+		return err
+	}
+	if err := db.MigrateRiver(ctx); err != nil {
 		return err
 	}
 	slog.Info("migrations applied")
@@ -76,18 +82,34 @@ func run() error {
 		DeleteAfterIngest: cfg.StorageDeleteAfterIngest,
 	}
 
-	worker := &ingest.Worker{
-		Ingestor:     ingestor,
-		PollInterval: time.Second,
-		// No point claiming more Documents than can have an LLM call running
-		// at once — LLM_MAX_CONCURRENT is already the real bottleneck.
-		BatchSize: cfg.LLMMaxConcurrent,
+	workers := river.NewWorkers()
+	river.AddWorker(workers, &ingest.ProcessDocumentWorker{Ingestor: ingestor})
+
+	// WORKER_ENABLED=false makes this an insert-only client: Stage still
+	// enqueues a job per Document via db.River, but this process never
+	// dequeues and works one — for splitting HTTP-only replicas from
+	// dedicated worker replicas on the same queue.
+	riverConfig := &river.Config{Workers: workers}
+	if cfg.WorkerEnabled {
+		riverConfig.Queues = map[string]river.QueueConfig{
+			// RIVER_MAX_WORKERS only bounds how many jobs this client may
+			// dequeue at once; LLM_MAX_CONCURRENT's semaphore in the
+			// Provider is what actually caps outbound LLM calls, and can
+			// sit well below it.
+			river.QueueDefault: {MaxWorkers: cfg.RiverMaxWorkers},
+		}
 	}
-	workerDone := make(chan struct{})
-	go func() {
-		defer close(workerDone)
-		worker.Run(ctx)
-	}()
+	riverClient, err := river.NewClient(riverpgxv5.New(db.Pool), riverConfig)
+	if err != nil {
+		return fmt.Errorf("river client: %w", err)
+	}
+	db.River = riverClient
+
+	if cfg.WorkerEnabled {
+		if err := riverClient.Start(ctx); err != nil {
+			return fmt.Errorf("river client start: %w", err)
+		}
+	}
 
 	router := httpapi.NewRouter(db, objectStore, ingestor, cfg.CORSAllowedOrigins)
 
@@ -118,13 +140,16 @@ func run() error {
 		return err
 	}
 
-	// worker.Run already stopped claiming new batches when ctx was cancelled
-	// above; this just waits for whatever it had already claimed to finish
-	// processing, same "drain, don't kill" contract as srv.Shutdown.
-	select {
-	case <-workerDone:
-	case <-time.After(15 * time.Second):
-		slog.Warn("ingest worker did not drain in time")
+	// riverClient.Stop drains any job it has already fetched — e.g. a
+	// summarise call mid-flight — before returning, same "drain, don't
+	// kill" contract as srv.Shutdown above. air's kill_delay must not
+	// sever it mid-call.
+	if cfg.WorkerEnabled {
+		stopCtx, cancelStop := context.WithTimeout(context.Background(), 15*time.Second)
+		defer cancelStop()
+		if err := riverClient.Stop(stopCtx); err != nil {
+			slog.Warn("river client did not stop cleanly", "error", err)
+		}
 	}
 	return nil
 }

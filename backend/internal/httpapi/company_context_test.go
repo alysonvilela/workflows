@@ -325,6 +325,9 @@ func ingestOneWithDeleteAfterIngest(t *testing.T, deleteAfter bool) (*storage.St
 	if err := db.Migrate(cfg.DatabaseURL); err != nil {
 		t.Fatalf("migrate: %v", err)
 	}
+	if err := db.MigrateRiver(ctx); err != nil {
+		t.Fatalf("migrate river schema: %v", err)
+	}
 	if _, err := db.Pool.Exec(ctx, "TRUNCATE companies CASCADE"); err != nil {
 		t.Fatalf("truncate: %v", err)
 	}
@@ -352,17 +355,7 @@ func ingestOneWithDeleteAfterIngest(t *testing.T, deleteAfter bool) (*storage.St
 		DeleteAfterIngest: deleteAfter,
 	}
 
-	worker := &ingest.Worker{Ingestor: ingestor, PollInterval: 20 * time.Millisecond, BatchSize: 8}
-	workerCtx, cancelWorker := context.WithCancel(ctx)
-	workerDone := make(chan struct{})
-	go func() {
-		defer close(workerDone)
-		worker.Run(workerCtx)
-	}()
-	t.Cleanup(func() {
-		cancelWorker()
-		<-workerDone
-	})
+	startRiverClient(t, ctx, db, ingestor)
 
 	srv := httptest.NewServer(httpapi.NewRouter(db, objectStore, ingestor, "*"))
 	t.Cleanup(srv.Close)

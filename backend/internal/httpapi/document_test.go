@@ -121,14 +121,18 @@ func getDocument(t *testing.T, srv *httptest.Server, companyID, documentID strin
 // consultant's own polling would observe, matching the frontend.
 func waitForTerminalStatus(t *testing.T, srv *httptest.Server, companyID, documentID string) documentDoc {
 	t.Helper()
-	deadline := time.Now().Add(5 * time.Second)
+	// River's own fetch latency (LISTEN/NOTIFY plus a poll fallback) adds
+	// slack beyond the old worker's 20ms poll loop, and more under the
+	// contention of running the whole suite at once — 15s leaves headroom
+	// without masking a genuinely stuck Document.
+	deadline := time.Now().Add(15 * time.Second)
 	for {
 		doc := getDocument(t, srv, companyID, documentID)
 		if doc.Status != "parsing" {
 			return doc
 		}
 		if time.Now().After(deadline) {
-			t.Fatalf("document %s still %q after 5s", documentID, doc.Status)
+			t.Fatalf("document %s still %q after 15s", documentID, doc.Status)
 		}
 		time.Sleep(20 * time.Millisecond)
 	}

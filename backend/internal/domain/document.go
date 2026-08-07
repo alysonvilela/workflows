@@ -16,6 +16,23 @@ const (
 	DocumentStatusFailed  = "failed"
 )
 
+// ProcessDocumentKind identifies the River job that runs a staged
+// Document through Parse Strategy and the summariser — see
+// internal/ingest.ProcessDocumentWorker. Defined here rather than in
+// internal/ingest so internal/store can insert the job (ticket 16:
+// InsertTx in the same transaction that creates the Document row)
+// without importing the ingest package.
+const ProcessDocumentKind = "process_document"
+
+// ProcessDocumentArgs is the River job body for ProcessDocumentKind. It
+// satisfies river.JobArgs structurally (Kind() string) without this
+// package importing River.
+type ProcessDocumentArgs struct {
+	DocumentID string `json:"document_id"`
+}
+
+func (ProcessDocumentArgs) Kind() string { return ProcessDocumentKind }
+
 // Document is a file a Company supplied, on its way to becoming an entry in
 // the Company Context.
 type Document struct {

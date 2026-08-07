@@ -4,18 +4,12 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"time"
 
 	"github.com/discovery/backend/internal/domain"
 	"github.com/jackc/pgx/v5"
 )
 
 const documentColumns = `id, company_id, s3_key, title, kind, raw_text, summary, status, error, checksum, created_at, updated_at`
-
-// documentClaimLease bounds how long a worker may hold a Document claimed
-// in status 'parsing' before another worker is allowed to take it back —
-// what makes a crash mid-Process recoverable instead of a stuck Document.
-const documentClaimLease = 5 * time.Minute
 
 func scanDocument(row pgx.Row) (domain.Document, error) {
 	var d domain.Document
@@ -49,12 +43,21 @@ func (s *Store) FindDocumentByChecksum(ctx context.Context, companyID, checksum 
 	return d, nil
 }
 
-// CreateDocumentIfNew inserts a new Document in status 'parsing', unless one
-// already exists for this (company_id, checksum) — in which case that
-// existing row is returned and created is false. This is the mechanism that
-// keeps the same file uploaded twice from being reprocessed.
+// CreateDocumentIfNew inserts a new Document in status 'parsing' and
+// enqueues its process_document River job in the same transaction —
+// either both happen or neither (ticket 16) — unless a Document already
+// exists for this (company_id, checksum), in which case that existing row
+// is returned, created is false, and no job is enqueued (one already ran,
+// or is running, for it). This is the mechanism that keeps the same file
+// uploaded twice from being reprocessed.
 func (s *Store) CreateDocumentIfNew(ctx context.Context, companyID, s3Key, title, kind, checksum string) (doc domain.Document, created bool, err error) {
-	row := s.Pool.QueryRow(ctx, `
+	tx, err := s.Pool.Begin(ctx)
+	if err != nil {
+		return domain.Document{}, false, fmt.Errorf("store: create document: begin: %w", err)
+	}
+	defer tx.Rollback(ctx)
+
+	row := tx.QueryRow(ctx, `
 		INSERT INTO documents (company_id, s3_key, title, kind, checksum, status)
 		VALUES ($1, $2, $3, $4, $5, 'parsing')
 		ON CONFLICT (company_id, checksum) DO NOTHING
@@ -70,45 +73,36 @@ func (s *Store) CreateDocumentIfNew(ctx context.Context, companyID, s3Key, title
 	if err != nil {
 		return domain.Document{}, false, fmt.Errorf("store: create document: %w", err)
 	}
+
+	if _, err := s.River.InsertTx(ctx, tx, domain.ProcessDocumentArgs{DocumentID: d.ID}, nil); err != nil {
+		return domain.Document{}, false, fmt.Errorf("store: enqueue process document job: %w", err)
+	}
+
+	if err := tx.Commit(ctx); err != nil {
+		return domain.Document{}, false, fmt.Errorf("store: create document: commit: %w", err)
+	}
 	return d, true, nil
 }
 
-// ClaimPendingDocuments finds up to limit Documents staged (status
-// 'parsing') but not currently being processed — either never claimed, or
-// claimed past documentClaimLease by a worker that crashed or was
-// redeployed mid-Process — and marks them claimed in one atomic step.
-// SKIP LOCKED is what lets several worker ticks (in this process or a
-// future replica) poll concurrently without claiming the same row twice;
-// this is the correctness guard, not anything held in memory (ADR-0003).
-func (s *Store) ClaimPendingDocuments(ctx context.Context, limit int) ([]domain.Document, error) {
-	rows, err := s.Pool.Query(ctx, `
-		UPDATE documents
-		SET claimed_at = now()
-		WHERE id IN (
-			SELECT id FROM documents
-			WHERE status = 'parsing' AND (claimed_at IS NULL OR claimed_at < now() - $1::interval)
-			ORDER BY created_at
-			LIMIT $2
-			FOR UPDATE SKIP LOCKED
-		)
-		RETURNING `+documentColumns, documentClaimLease.String(), limit)
+// GetDocumentByID loads a Document by id alone, unscoped by company_id —
+// unlike GetDocument, which the HTTP layer uses. A process_document job
+// body only carries the Document's id (River job args stay minimal), so
+// ProcessDocumentWorker.Work needs this to load the row it was told to
+// process.
+func (s *Store) GetDocumentByID(ctx context.Context, id string) (domain.Document, error) {
+	row := s.Pool.QueryRow(ctx, `
+		SELECT `+documentColumns+`
+		FROM documents
+		WHERE id = $1
+	`, id)
+	d, err := scanDocument(row)
+	if isNotFoundError(err) {
+		return domain.Document{}, domain.ErrNotFound
+	}
 	if err != nil {
-		return nil, fmt.Errorf("store: claim pending documents: %w", err)
+		return domain.Document{}, fmt.Errorf("store: get document by id: %w", err)
 	}
-	defer rows.Close()
-
-	docs := []domain.Document{}
-	for rows.Next() {
-		d, err := scanDocument(rows)
-		if err != nil {
-			return nil, fmt.Errorf("store: scan claimed document: %w", err)
-		}
-		docs = append(docs, d)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("store: claim pending documents: %w", err)
-	}
-	return docs, nil
+	return d, nil
 }
 
 // MarkDocumentReady marks doc ready with rawText and summary, and folds the

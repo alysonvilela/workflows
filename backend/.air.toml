@@ -12,8 +12,11 @@ tmp_dir = "tmp"
   delay = 200
   stop_on_error = true
   send_interrupt = true
-  # River needs a moment to finish in-flight Nodes before the process dies.
-  kill_delay = "2s"
+  # riverClient.Stop drains an in-flight job before the process exits — a
+  # summarise call averages ~10s (ticket 16), so this has to outlast one,
+  # not just the LLM call itself but also the shutdown sequence ahead of
+  # it (srv.Shutdown, then Stop, each with their own timeout in main.go).
+  kill_delay = "20s"
 
 [log]
   time = true

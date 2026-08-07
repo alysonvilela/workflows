@@ -3,10 +3,11 @@
 //
 // Stage and Process are deliberately split. Stage is what an HTTP upload
 // calls: validate, dedupe, store the bytes, create the Document row —
-// fast, no LLM call on the request path. Process is what Worker calls in
-// the background: Parse Strategy, then the summariser, then ready/failed.
-// A later ticket's ask_document Gate answers through Stage the same way
-// an upload does.
+// fast, no LLM call on the request path. Process is what
+// ProcessDocumentWorker calls in the background, one River job per
+// Document (ticket 16): Parse Strategy, then the summariser, then
+// ready/failed. A later ticket's ask_document Gate answers through Stage
+// the same way an upload does.
 package ingest
 
 import (
@@ -25,7 +26,7 @@ import (
 type DocumentStore interface {
 	FindDocumentByChecksum(ctx context.Context, companyID, checksum string) (domain.Document, error)
 	CreateDocumentIfNew(ctx context.Context, companyID, s3Key, title, kind, checksum string) (doc domain.Document, created bool, err error)
-	ClaimPendingDocuments(ctx context.Context, limit int) ([]domain.Document, error)
+	GetDocumentByID(ctx context.Context, id string) (domain.Document, error)
 	MarkDocumentReady(ctx context.Context, doc domain.Document, rawText string, summary domain.DocumentSummary) (domain.Document, error)
 	MarkDocumentFailed(ctx context.Context, id, reason string) (domain.Document, error)
 }
@@ -54,8 +55,9 @@ type Ingestor struct {
 
 // Stage validates kind and size, dedupes by checksum, stores the original
 // in object storage, and creates the Document row in status 'parsing'. It
-// does not parse or summarise — that is Process's job, run later by
-// Worker — so this returns as soon as the bytes are safely stored,
+// does not parse or summarise — that is Process's job, run later by the
+// River job CreateDocumentIfNew enqueues — so this returns as soon as the
+// bytes are safely stored,
 // regardless of how long the LLM call behind the summariser would take.
 // A returned error means the file was rejected outright (unsupported
 // type, too large) — the caller reports it per-file rather than failing
@@ -95,11 +97,11 @@ func (in *Ingestor) Stage(ctx context.Context, companyID, filename string, data 
 
 // Process runs the rest of the pipeline for one already-staged Document:
 // fetch its bytes back from object storage, run its Parse Strategy, run
-// the summariser, and record the result. Called by Worker once it has
-// claimed doc — never by the HTTP path directly. A Parse or summariser
-// failure is not a Go error return: it is a Document left in status
-// 'failed' with its Error field set, same as Stage's synchronous
-// rejections are for the caller to report per-file.
+// the summariser, and record the result. Called by ProcessDocumentWorker
+// once River has delivered doc's job — never by the HTTP path directly.
+// A Parse or summariser failure is not a Go error return: it is a
+// Document left in status 'failed' with its Error field set, same as
+// Stage's synchronous rejections are for the caller to report per-file.
 func (in *Ingestor) Process(ctx context.Context, doc domain.Document) (domain.Document, error) {
 	data, err := in.Objects.Get(ctx, doc.S3Key)
 	if err != nil {
