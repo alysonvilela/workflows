@@ -1,9 +1,16 @@
 import { fileURLToPath } from "node:url";
+import { tanstackRouter } from "@tanstack/router-plugin/vite";
 import { defineConfig } from "vite-plus";
-import tailwindcss from '@tailwindcss/vite'
+import tailwindcss from "@tailwindcss/vite";
 
 export default defineConfig({
   plugins: [
+    tanstackRouter({
+      target: "react",
+      autoCodeSplitting: true,
+      routesDirectory: "src/routes",
+      generatedRouteTree: "src/routeTree.gen.ts",
+    }),
     tailwindcss(),
   ],
   resolve: {

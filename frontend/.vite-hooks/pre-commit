@@ -1,1 +1,1 @@
-vp staged
+cd "$(git rev-parse --show-toplevel)/frontend" && vp staged

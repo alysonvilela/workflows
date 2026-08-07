@@ -1,0 +1,19 @@
+packages:
+  - "frontend"
+
+catalog:
+  vite: npm:@voidzero-dev/vite-plus-core@0.2.8
+  vite-plus: 0.2.8
+minimumReleaseAgeExclude:
+  - '@tanstack/history@1.162.1'
+  - '@tanstack/react-router@1.170.21'
+  - '@tanstack/router-core@1.171.18'
+  - '@tanstack/router-generator@1.167.24'
+  - '@tanstack/router-plugin@1.168.26'
+overrides:
+  vite: "catalog:"
+peerDependencyRules:
+  allowAny:
+    - vite
+  allowedVersions:
+    vite: "*"
