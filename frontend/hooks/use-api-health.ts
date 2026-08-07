@@ -8,7 +8,7 @@ const POLL_INTERVAL_MS = 15_000;
 
 export type ApiHealth =
   | { state: "loading" }
-  | { state: "online"; health: HealthStatus }
+  | { state: "online"; data: HealthStatus }
   | { state: "offline"; error: string };
 
 export function useApiHealth(): ApiHealth {
@@ -24,5 +24,5 @@ export function useApiHealth(): ApiHealth {
 
   if (query.isPending) return { state: "loading" };
   if (query.isError) return { state: "offline", error: query.error.message };
-  return { state: "online", health: query.data };
+  return { state: "online", data: query.data };
 }

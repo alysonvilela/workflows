@@ -49,11 +49,11 @@ function ApiHealthBadge(): React.ReactElement {
     );
   }
 
-  if (health.health.status !== "ok") {
+  if (health.data.status !== "ok") {
     return (
       <Badge
         variant="warning"
-        title={`database: ${health.health.database} — storage: ${health.health.storage}`}
+        title={`database: ${health.data.database} — storage: ${health.data.storage}`}
       >
         API degraded
       </Badge>
