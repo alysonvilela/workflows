@@ -16,6 +16,8 @@ tools: ## Install dev tooling (air for Go hot reload, goose for migrations)
 	cd frontend && pnpm install
 
 deps: ## Start infra dependencies (postgres + rustfs)
+	@mkdir -p compose-data/postgres compose-data/rustfs
+	@chmod 777 compose-data/rustfs # rustfs runs as a non-root uid in its image
 	docker compose up -d --wait
 
 deps-down: ## Stop infra dependencies

@@ -9,7 +9,7 @@ services:
     ports:
       - "${POSTGRES_PORT}:5432"
     volumes:
-      - postgres_data:/var/lib/postgresql/data
+      - ./compose-data/postgres:/var/lib/postgresql/data
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
       interval: 5s
@@ -27,8 +27,4 @@ services:
     ports:
       - "${S3_PORT}:9000"
     volumes:
-      - rustfs_data:/data
-
-volumes:
-  postgres_data:
-  rustfs_data:
+      - ./compose-data/rustfs:/data

@@ -10,4 +10,6 @@ backend/bin/
 *.test
 coverage.out
 
+compose-data/
+
 .DS_Store
