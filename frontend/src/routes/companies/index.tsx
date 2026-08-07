@@ -2,6 +2,7 @@ import { createFileRoute, Link } from "@tanstack/react-router";
 import { ChevronLeftIcon, ChevronRightIcon, PlusIcon } from "lucide-react";
 import type React from "react";
 import { useState } from "react";
+import { Controller, useForm } from "react-hook-form";
 import { DeleteCompanyDialog } from "@/components/companies/delete-company-dialog";
 import { RouteSkeleton } from "@/components/layout/route-skeleton";
 import { Badge } from "@/components/ui/badge";
@@ -9,7 +10,6 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Empty, EmptyDescription, EmptyHeader, EmptyTitle } from "@/components/ui/empty";
 import { Field, FieldError, FieldLabel } from "@/components/ui/field";
-import { Form } from "@/components/ui/form";
 import { Input } from "@/components/ui/input";
 import {
   Pagination,
@@ -27,8 +27,7 @@ import {
 } from "@/components/ui/table";
 import { useCompanies } from "@/hooks/use-companies";
 import { useCreateCompany } from "@/hooks/use-company-mutations";
-import { useFieldErrors } from "@/hooks/use-field-errors";
-import type { Company } from "@/lib/api-client";
+import { ApiRequestError, type Company } from "@/lib/api-client";
 
 const PER_PAGE = 20;
 
@@ -73,10 +72,32 @@ function CompaniesRoute(): React.ReactElement {
   );
 }
 
+interface CreateCompanyValues {
+  name: string;
+}
+
 function CreateCompanyForm(): React.ReactElement {
-  const [name, setName] = useState("");
-  const { clear, fieldErrors, reset, setFromError } = useFieldErrors();
   const createCompany = useCreateCompany();
+  const {
+    control,
+    clearErrors,
+    handleSubmit,
+    reset,
+    setError,
+    formState: { errors },
+  } = useForm<CreateCompanyValues>({ defaultValues: { name: "" } });
+
+  const onSubmit = handleSubmit((values) => {
+    createCompany.mutate(values.name, {
+      onError: (error) => {
+        if (!(error instanceof ApiRequestError)) return;
+        for (const [field, message] of Object.entries(error.fields ?? {})) {
+          setError(field as keyof CreateCompanyValues, { message, type: "server" });
+        }
+      },
+      onSuccess: () => reset(),
+    });
+  });
 
   return (
     <Card>
@@ -87,37 +108,31 @@ function CreateCompanyForm(): React.ReactElement {
         </CardDescription>
       </CardHeader>
       <CardContent>
-        <Form
-          className="flex items-start gap-3"
-          errors={fieldErrors}
-          onFormSubmit={() => {
-            createCompany.mutate(name, {
-              onError: setFromError,
-              onSuccess: () => {
-                setName("");
-                reset();
-              },
-            });
-          }}
-        >
-          <Field className="flex-1" name="name">
+        <form className="flex items-start gap-3" onSubmit={onSubmit}>
+          <Field className="flex-1" invalid={Boolean(errors.name)} name="name">
             <FieldLabel className="sr-only">Company name</FieldLabel>
-            <Input
+            <Controller
+              control={control}
               name="name"
-              onValueChange={(value) => {
-                setName(value);
-                clear("name");
-              }}
-              placeholder="e.g. Aurora Logistics"
-              value={name}
+              render={({ field }) => (
+                <Input
+                  name={field.name}
+                  onValueChange={(value) => {
+                    field.onChange(value);
+                    clearErrors("name");
+                  }}
+                  placeholder="e.g. Aurora Logistics"
+                  value={field.value}
+                />
+              )}
             />
-            <FieldError match />
+            {errors.name && <FieldError match>{errors.name.message}</FieldError>}
           </Field>
           <Button loading={createCompany.isPending} type="submit">
             <PlusIcon />
             Create
           </Button>
-        </Form>
+        </form>
       </CardContent>
     </Card>
   );

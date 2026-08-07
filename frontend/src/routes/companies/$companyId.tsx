@@ -1,7 +1,7 @@
 import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
 import { ArrowLeftIcon } from "lucide-react";
 import type React from "react";
-import { useEffect, useState } from "react";
+import { Controller, useForm, useWatch } from "react-hook-form";
 import { DeleteCompanyDialog } from "@/components/companies/delete-company-dialog";
 import { RouteSkeleton } from "@/components/layout/route-skeleton";
 import { Button } from "@/components/ui/button";
@@ -15,13 +15,11 @@ import {
 } from "@/components/ui/card";
 import { Empty, EmptyDescription, EmptyHeader, EmptyTitle } from "@/components/ui/empty";
 import { Field, FieldError, FieldLabel } from "@/components/ui/field";
-import { Form } from "@/components/ui/form";
 import { Input } from "@/components/ui/input";
 import { Separator } from "@/components/ui/separator";
 import { useCompany } from "@/hooks/use-companies";
 import { useRenameCompany } from "@/hooks/use-company-mutations";
-import { useFieldErrors } from "@/hooks/use-field-errors";
-import type { Company } from "@/lib/api-client";
+import { ApiRequestError, type Company } from "@/lib/api-client";
 
 export const Route = createFileRoute("/companies/$companyId")({
   component: CompanyRoute,
@@ -83,41 +81,59 @@ function CompanyRoute(): React.ReactElement {
   );
 }
 
+interface RenameCompanyValues {
+  name: string;
+}
+
 function RenameCompanyForm({ company }: { company: Company }): React.ReactElement {
-  const [name, setName] = useState(company.name);
-  const { clear, fieldErrors, reset, setFromError } = useFieldErrors();
   const renameCompany = useRenameCompany();
+  const {
+    control,
+    clearErrors,
+    handleSubmit,
+    setError,
+    formState: { errors },
+  } = useForm<RenameCompanyValues>({ values: { name: company.name } });
 
-  useEffect(() => {
-    setName(company.name);
-  }, [company.name]);
-
-  const trimmed = name.trim();
+  const nameValue = useWatch({ control, name: "name" });
+  const trimmed = nameValue.trim();
   const unchanged = trimmed === company.name;
 
+  const onSubmit = handleSubmit((values) => {
+    const trimmedName = values.name.trim();
+    if (trimmedName === company.name) return;
+    renameCompany.mutate(
+      { id: company.id, name: trimmedName },
+      {
+        onError: (error) => {
+          if (!(error instanceof ApiRequestError)) return;
+          for (const [field, message] of Object.entries(error.fields ?? {})) {
+            setError(field as keyof RenameCompanyValues, { message, type: "server" });
+          }
+        },
+      },
+    );
+  });
+
   return (
-    <Form
-      className="flex items-end gap-3"
-      errors={fieldErrors}
-      onFormSubmit={() => {
-        if (unchanged) return;
-        renameCompany.mutate(
-          { id: company.id, name: trimmed },
-          { onError: setFromError, onSuccess: reset },
-        );
-      }}
-    >
-      <Field className="flex-1" name="name">
+    <form className="flex items-end gap-3" onSubmit={onSubmit}>
+      <Field className="flex-1" invalid={Boolean(errors.name)} name="name">
         <FieldLabel>Name</FieldLabel>
-        <Input
+        <Controller
+          control={control}
           name="name"
-          onValueChange={(value) => {
-            setName(value);
-            clear("name");
-          }}
-          value={name}
+          render={({ field }) => (
+            <Input
+              name={field.name}
+              onValueChange={(value) => {
+                field.onChange(value);
+                clearErrors("name");
+              }}
+              value={field.value}
+            />
+          )}
         />
-        <FieldError match />
+        {errors.name && <FieldError match>{errors.name.message}</FieldError>}
       </Field>
       <Button
         disabled={unchanged || trimmed === ""}
@@ -127,6 +143,6 @@ function RenameCompanyForm({ company }: { company: Company }): React.ReactElemen
       >
         Save
       </Button>
-    </Form>
+    </form>
   );
 }

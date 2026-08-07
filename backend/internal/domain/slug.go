@@ -1,21 +1,15 @@
 package domain
 
-import (
-	"regexp"
-	"strings"
-)
+import "github.com/gosimple/slug"
 
-var nonSlugChars = regexp.MustCompile(`[^a-z0-9]+`)
-
-// Slugify derives a URL-safe slug from a Company name: lowercased, runs of
-// non-alphanumeric characters collapsed to one hyphen, edges trimmed. The
+// Slugify derives a URL-safe slug from a Company name — transliterating
+// accents (e.g. "Logística" -> "logistica") rather than dropping them. The
 // slug is never typed by the consultant — this is the only place it comes
 // from.
 func Slugify(name string) string {
-	slug := nonSlugChars.ReplaceAllString(strings.ToLower(strings.TrimSpace(name)), "-")
-	slug = strings.Trim(slug, "-")
-	if slug == "" {
-		slug = "company"
+	s := slug.Make(name)
+	if s == "" {
+		s = "company"
 	}
-	return slug
+	return s
 }
