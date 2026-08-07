@@ -32,12 +32,14 @@ type Document struct {
 }
 
 // DetectDocumentKind maps a filename's extension to a supported Document
-// Kind. Only Markdown has a Parse Strategy today; csv arrives in a later
-// ticket, so its extension is deliberately not recognised yet.
+// Kind. An unrecognised extension returns ok=false so the caller can fail
+// the Document with a clear message.
 func DetectDocumentKind(filename string) (kind string, ok bool) {
 	switch strings.ToLower(filepath.Ext(filename)) {
 	case ".md", ".markdown":
 		return DocumentKindMarkdown, true
+	case ".csv":
+		return DocumentKindCSV, true
 	default:
 		return "", false
 	}

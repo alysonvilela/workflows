@@ -47,7 +47,7 @@ type Ingestor struct {
 func (in *Ingestor) Ingest(ctx context.Context, companyID, filename string, data []byte) (domain.Document, error) {
 	kind, ok := domain.DetectDocumentKind(filename)
 	if !ok {
-		return domain.Document{}, fmt.Errorf("%q is not a supported file type — only .md and .markdown are accepted", filename)
+		return domain.Document{}, fmt.Errorf("%q is not a supported file type — only .md, .markdown and .csv are accepted", filename)
 	}
 	if int64(len(data)) > in.MaxUploadBytes {
 		return domain.Document{}, fmt.Errorf("%q exceeds the %d byte upload limit", filename, in.MaxUploadBytes)
@@ -104,6 +104,8 @@ func contentType(kind string) string {
 	switch kind {
 	case domain.DocumentKindMarkdown:
 		return "text/markdown; charset=utf-8"
+	case domain.DocumentKindCSV:
+		return "text/csv; charset=utf-8"
 	default:
 		return "application/octet-stream"
 	}
