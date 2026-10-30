@@ -4,9 +4,9 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "dev": "node init && vp dev",
+    "dev": "vp dev",
     "prototype": "vp dev --port 5391",
-    "build": "node init && tsc && vp build",
+    "build": "tsc && vp build",
     "preview": "vp preview",
     "prepare": "vp config"
   },
